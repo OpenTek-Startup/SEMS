@@ -1,0 +1,18 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+datasource db {
+  provider  = "postgresql"
+  }
+
+// First minimal model — only to verify the connection.
+// The real Core model (Tenant, User, RBAC, Module Registry, Audit)
+// is built in Phase 1.
+model Tenant {
+  id        String   @id @default(uuid())
+  name      String
+  type      String   // primary | secondary | university
+  status    String   @default("active")
+  createdAt DateTime @default(now())
+}
