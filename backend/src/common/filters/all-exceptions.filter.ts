@@ -20,6 +20,9 @@ export class AllExceptionsFilter implements ExceptionFilter {
     const response = ctx.getResponse<Response>();
     const request = ctx.getRequest<Request>();
 
+    // originalUrl keeps the full path (incl. the /api prefix); request.url
+    // can be shortened by Express routers.
+    const path = request.originalUrl ?? request.url;
     const isHttp = exception instanceof HttpException;
     const status =
       exception instanceof HttpException
@@ -34,15 +37,15 @@ export class AllExceptionsFilter implements ExceptionFilter {
     if (status >= 500) {
       // Unexpected failures: keep the stack trace so they can be debugged.
       const stack = exception instanceof Error ? exception.stack : String(exception);
-      this.logger.error(`${request.method} ${request.url} -> ${status}`, stack);
+      this.logger.error(`${request.method} ${path} -> ${status}`, stack);
     } else {
-      this.logger.warn(`${request.method} ${request.url} -> ${status}`);
+      this.logger.warn(`${request.method} ${path} -> ${status}`);
     }
 
     response.status(status).json({
       success: false,
       statusCode: status,
-      path: request.url,
+      path,
       timestamp: new Date().toISOString(),
       // Never leak internal error details to clients in production.
       error: !isHttp && this.isProduction ? 'Internal server error' : error,

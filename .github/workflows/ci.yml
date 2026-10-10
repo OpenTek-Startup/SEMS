@@ -23,11 +23,11 @@ jobs:
       DIRECT_URL: postgresql://ci:ci@localhost:5432/yese_ci
       JWT_SECRET: ci-secret-ci-secret-ci-secret-ci-secret-1234
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: pnpm/action-setup@v4
         with:
           package_json_file: backend/package.json
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: pnpm
@@ -47,16 +47,17 @@ jobs:
     env:
       NEXT_PUBLIC_API_URL: http://localhost:3001/api
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: pnpm/action-setup@v4
         with:
           package_json_file: frontend/package.json
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: pnpm
           cache-dependency-path: frontend/pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
       - run: pnpm lint
-      - run: pnpm typecheck
+      # build first: it generates Next.js route types (LayoutProps, PageProps)
       - run: pnpm build
+      - run: pnpm typecheck
