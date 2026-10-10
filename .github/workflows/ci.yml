@@ -29,7 +29,7 @@ jobs:
           package_json_file: backend/package.json
       - uses: actions/setup-node@v5
         with:
-          node-version: 22
+          node-version: 24
           cache: pnpm
           cache-dependency-path: backend/pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile # also runs `prisma generate`
@@ -53,7 +53,7 @@ jobs:
           package_json_file: frontend/package.json
       - uses: actions/setup-node@v5
         with:
-          node-version: 22
+          node-version: 24
           cache: pnpm
           cache-dependency-path: frontend/pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
