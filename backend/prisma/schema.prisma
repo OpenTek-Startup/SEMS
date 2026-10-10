@@ -1,18 +1,217 @@
+// YESE — Core Platform schema (Phase 1)
+//
+// Conventions (SRS v1.2 §8.1, NFR-SEC-01):
+//  - Tables and columns are snake_case in PostgreSQL (@@map / @map);
+//    models and fields stay camelCase in TypeScript.
+//  - UUID primary keys (@db.Uuid).
+//  - Every tenant-owned table carries a non-null tenant_id, junction tables included.
+//  - Uniqueness that belongs to a school is scoped by tenant_id.
+//  - The audit log is append-only from the application's point of view.
+
 generator client {
   provider = "prisma-client"
   output   = "../src/generated/prisma"
 }
-datasource db {
-  provider  = "postgresql"
-  }
 
-// First minimal model — only to verify the connection.
-// The real Core model (Tenant, User, RBAC, Module Registry, Audit)
-// is built in Phase 1.
+datasource db {
+  provider = "postgresql"
+}
+
+// ---------------------------------------------------------------- enums
+
+enum InstitutionType {
+  primary
+  secondary
+  university
+
+  @@map("institution_type")
+}
+
+enum TenantStatus {
+  active
+  suspended
+
+  @@map("tenant_status")
+}
+
+enum UserStatus {
+  active
+  disabled
+
+  @@map("user_status")
+}
+
+/// The four fixed base roles (two-layer RBAC, FR-ID-04).
+enum RoleArchetype {
+  admin
+  staff
+  parent
+  student
+
+  @@map("role_archetype")
+}
+
+enum ModuleCategory {
+  core
+  business
+  extension
+
+  @@map("module_category")
+}
+
+// -------------------------------------------------------------- tenancy
+
+/// One school (tenant). Root of all tenant-scoped data.
 model Tenant {
-  id        String   @id @default(uuid())
+  id        String          @id @default(uuid()) @db.Uuid
   name      String
-  type      String   // primary | secondary | university
-  status    String   @default("active")
-  createdAt DateTime @default(now())
+  /// Subdomain / X-Tenant value, e.g. "northfield".
+  slug      String          @unique
+  type      InstitutionType
+  status    TenantStatus    @default(active)
+  createdAt DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime        @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  users           User[]
+  roles           Role[]
+  userRoles       UserRole[]
+  rolePermissions RolePermission[]
+  auditLogs       AuditLog[]
+
+  @@map("tenants")
+}
+
+// ------------------------------------------------------------- identity
+
+/// An account. Belongs to exactly one school (FR-ID-03), except platform
+/// Super Admins, which have tenant_id NULL and is_super_admin = true.
+model User {
+  id                 String     @id @default(uuid()) @db.Uuid
+  tenantId           String?    @map("tenant_id") @db.Uuid
+  email              String
+  passwordHash       String     @map("password_hash")
+  firstName          String     @map("first_name")
+  lastName           String     @map("last_name")
+  status             UserStatus @default(active)
+  isSuperAdmin       Boolean    @default(false) @map("is_super_admin")
+  mustChangePassword Boolean    @default(false) @map("must_change_password")
+  lastLoginAt        DateTime?  @map("last_login_at") @db.Timestamptz(3)
+  createdAt          DateTime   @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt          DateTime   @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant    Tenant?    @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  roles     UserRole[]
+  auditLogs AuditLog[]
+
+  // Email is unique per school. (Super Admin emails are checked in code,
+  // because PostgreSQL treats NULL tenant_id values as distinct.)
+  @@unique([tenantId, email])
+  @@index([email])
+  @@map("users")
+}
+
+// ----------------------------------------------------------------- RBAC
+
+/// A role inside one school: one of the four fixed archetypes (is_system)
+/// or a custom role built by the school (FR-ID-05).
+model Role {
+  id          String         @id @default(uuid()) @db.Uuid
+  tenantId    String         @map("tenant_id") @db.Uuid
+  name        String
+  description String?
+  /// Set for the four base roles; null for custom roles.
+  archetype   RoleArchetype?
+  /// Base roles cannot be renamed or deleted.
+  isSystem    Boolean        @default(false) @map("is_system")
+  createdAt   DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime       @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant      Tenant           @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  users       UserRole[]
+  permissions RolePermission[]
+
+  @@unique([tenantId, name])
+  @@index([tenantId])
+  @@map("roles")
+}
+
+/// Platform-wide catalogue of modules (the Module Registry grows in Phase 1.5).
+model Module {
+  id          String         @id @default(uuid()) @db.Uuid
+  code        String         @unique
+  name        String
+  category    ModuleCategory
+  description String?
+
+  permissions Permission[]
+
+  @@map("modules")
+}
+
+/// Platform-wide permission catalogue: module.resource.action (FR-ID-06).
+model Permission {
+  id          String  @id @default(uuid()) @db.Uuid
+  code        String  @unique
+  moduleId    String  @map("module_id") @db.Uuid
+  description String?
+
+  module Module           @relation(fields: [moduleId], references: [id], onDelete: Restrict)
+  roles  RolePermission[]
+
+  @@index([moduleId])
+  @@map("permissions")
+}
+
+model UserRole {
+  userId     String   @map("user_id") @db.Uuid
+  roleId     String   @map("role_id") @db.Uuid
+  tenantId   String   @map("tenant_id") @db.Uuid
+  assignedAt DateTime @default(now()) @map("assigned_at") @db.Timestamptz(3)
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role   Role   @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+
+  @@id([userId, roleId])
+  @@index([tenantId])
+  @@index([roleId])
+  @@map("user_roles")
+}
+
+model RolePermission {
+  roleId       String @map("role_id") @db.Uuid
+  permissionId String @map("permission_id") @db.Uuid
+  tenantId     String @map("tenant_id") @db.Uuid
+
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Restrict)
+  tenant     Tenant     @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+
+  @@id([roleId, permissionId])
+  @@index([tenantId])
+  @@map("role_permissions")
+}
+
+// ---------------------------------------------------------------- audit
+
+/// Append-only record of security-relevant actions (FR-PL-06, FR-ID-09).
+/// tenant_id is NULL for platform-level events (e.g. tenant creation).
+model AuditLog {
+  id          String   @id @default(uuid()) @db.Uuid
+  tenantId    String?  @map("tenant_id") @db.Uuid
+  actorUserId String?  @map("actor_user_id") @db.Uuid
+  /// e.g. "tenant.created", "auth.login.failed", "role.permissions.updated"
+  action      String
+  entity      String?
+  entityId    String?  @map("entity_id") @db.Uuid
+  detail      Json?
+  ipAddress   String?  @map("ip_address")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  tenant Tenant? @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  actor  User?   @relation(fields: [actorUserId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId, createdAt])
+  @@index([actorUserId])
+  @@map("audit_logs")
 }
