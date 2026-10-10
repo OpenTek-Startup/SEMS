@@ -3,6 +3,7 @@ import { ConfigModule } from '@nestjs/config';
 import configuration from './config/configuration';
 import { validateEnv } from './config/env.validation';
 import { PrismaModule } from './prisma/prisma.module';
+import { TenancyModule } from './core/tenancy/tenancy.module';
 import { HealthModule } from './modules/health/health.module';
 
 @Module({
@@ -16,8 +17,9 @@ import { HealthModule } from './modules/health/health.module';
 
     // Core infrastructure
     PrismaModule,
+    TenancyModule,
 
-    // Feature modules (business modules go here as we build Phases 1+)
+    // Feature modules
     HealthModule,
   ],
 })

@@ -1,6 +1,6 @@
 import { createApi, fetchBaseQuery } from "@reduxjs/toolkit/query/react";
 import type { FetchBaseQueryError } from "@reduxjs/toolkit/query";
-import { API_URL } from "@/lib/config";
+import { API_URL, DEV_TENANT } from "@/lib/config";
 
 /** Every successful backend response is wrapped by its TransformInterceptor. */
 export interface ApiSuccess<T> {
@@ -26,6 +26,10 @@ export const baseApi = createApi({
   baseQuery: fetchBaseQuery({
     baseUrl: API_URL,
     credentials: "include",
+    prepareHeaders: (headers) => {
+      if (DEV_TENANT) headers.set("X-Tenant", DEV_TENANT);
+      return headers;
+    },
   }),
   tagTypes: [],
   endpoints: () => ({}),
