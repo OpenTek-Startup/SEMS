@@ -13,11 +13,14 @@ import { Request, Response } from 'express';
 export class AllExceptionsFilter implements ExceptionFilter {
   private readonly logger = new Logger(AllExceptionsFilter.name);
 
+  constructor(private readonly isProduction = false) {}
+
   catch(exception: unknown, host: ArgumentsHost) {
     const ctx = host.switchToHttp();
     const response = ctx.getResponse<Response>();
     const request = ctx.getRequest<Request>();
 
+    const isHttp = exception instanceof HttpException;
     const status =
       exception instanceof HttpException
         ? exception.getStatus()
@@ -28,14 +31,21 @@ export class AllExceptionsFilter implements ExceptionFilter {
         ? exception.getResponse()
         : 'Internal server error';
 
-    this.logger.error(`${request.method} ${request.url} -> ${status}`);
+    if (status >= 500) {
+      // Unexpected failures: keep the stack trace so they can be debugged.
+      const stack = exception instanceof Error ? exception.stack : String(exception);
+      this.logger.error(`${request.method} ${request.url} -> ${status}`, stack);
+    } else {
+      this.logger.warn(`${request.method} ${request.url} -> ${status}`);
+    }
 
     response.status(status).json({
       success: false,
       statusCode: status,
       path: request.url,
       timestamp: new Date().toISOString(),
-      error,
+      // Never leak internal error details to clients in production.
+      error: !isHttp && this.isProduction ? 'Internal server error' : error,
     });
   }
 }

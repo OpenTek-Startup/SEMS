@@ -28,3 +28,12 @@ Thumbs.db
 
 # testing
 coverage/
+
+# generated Prisma client (re-created by `pnpm install` / `pnpm db:generate`)
+src/generated/
+
+# TypeScript incremental build cache
+*.tsbuildinfo
+
+# editor swap files
+*.swp

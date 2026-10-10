@@ -1,0 +1,16 @@
+# Repo-wide ignores. backend/ and frontend/ have their own .gitignore files too.
+
+# OS / editor
+.DS_Store
+Thumbs.db
+desktop.ini
+*.swp
+*.swo
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# never commit secrets
+.env
+.env.local
+.env.*.local
