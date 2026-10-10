@@ -1,8 +1,8 @@
 "use client";
 
-import { useGetHealthQuery } from "@/lib/api/healthApi";
+import { useGetCurrentTenantQuery, useGetHealthQuery } from "@/lib/api/healthApi";
 import { httpStatus, isNetworkError } from "@/lib/api/baseApi";
-import { API_URL } from "@/lib/config";
+import { API_URL, DEV_TENANT } from "@/lib/config";
 
 type State = "ok" | "down" | "checking" | "unknown";
 
@@ -47,6 +47,7 @@ function StatusRow({
 export default function SystemStatus() {
   const { data, error, isLoading, isFetching, refetch, fulfilledTimeStamp } =
     useGetHealthQuery(undefined, { pollingInterval: 30_000 });
+  const school = useGetCurrentTenantQuery();
 
   // Work out each layer's state from the single /health call:
   // - network error      -> backend down (database unknown)
@@ -61,6 +62,15 @@ export default function SystemStatus() {
       : networkDown
         ? "unknown"
         : "down";
+
+  const schoolState: State = school.isLoading
+    ? "checking"
+    : school.data
+      ? "ok"
+      : "down";
+  const schoolDetail = school.data
+    ? `${school.data.name} (${school.data.slug})`
+    : `X-Tenant: ${DEV_TENANT} — ${httpStatus(school.error) === 404 ? "unknown school, run pnpm db:seed" : "not resolved"}`;
 
   const lastChecked = fulfilledTimeStamp
     ? new Date(fulfilledTimeStamp).toLocaleTimeString()
@@ -77,12 +87,15 @@ export default function SystemStatus() {
             System status
           </h2>
           <p className="text-sm text-muted">
-            Milestone M0: frontend, backend and database connected.
+            Frontend, backend, database and school resolution.
           </p>
         </div>
         <button
           type="button"
-          onClick={() => refetch()}
+          onClick={() => {
+            refetch();
+            school.refetch();
+          }}
           disabled={isFetching}
           className="h-10 shrink-0 rounded-lg border border-line px-4 text-sm font-medium hover:bg-ground disabled:opacity-60"
         >
@@ -102,6 +115,7 @@ export default function SystemStatus() {
           detail="Neon PostgreSQL via Prisma"
           state={database}
         />
+        <StatusRow name="School (tenant)" detail={schoolDetail} state={schoolState} />
       </ul>
 
       {networkDown && (

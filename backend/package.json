@@ -1,15 +1,15 @@
 {
   "name": "backend",
   "version": "0.0.1",
-  "description": "YESE (OpenTek SEMS-ERP) backend — NestJS modular monolith",
+  "description": "YESE (OpenTek SEMS-ERP) backend \u2014 NestJS modular monolith",
   "author": "",
   "private": true,
   "license": "UNLICENSED",
   "scripts": {
-    "build": "nest build",
+    "build": "node api.js && nest build",
     "deploy": "nest deploy",
     "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
-    "start": "nest start",
+    "start": "node api.js && nest start",
     "start:dev": "nest start --watch",
     "start:debug": "nest start --debug --watch",
     "start:prod": "node dist/main",
