@@ -18,6 +18,7 @@ export const TENANT_OWNED_MODELS = new Set<string>([
   'UserRole',
   'RolePermission',
   'AuditLog',
+  'Session',
 ]);
 
 const WHERE_OPS = new Set([

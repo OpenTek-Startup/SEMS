@@ -9,6 +9,13 @@ export default () => ({
   },
   jwt: {
     secret: process.env.JWT_SECRET,
+    // Access token lifetime: 15m, 900 (seconds), 1h ...
     expiresIn: process.env.JWT_EXPIRES_IN ?? '15m',
+  },
+  session: {
+    // Idle timeout (SRS FR-ID: end an idle session after 15 minutes).
+    idleMinutes: parseInt(process.env.SESSION_IDLE_MINUTES ?? '15', 10),
+    // Absolute session length, whatever the activity.
+    maxHours: parseInt(process.env.SESSION_MAX_HOURS ?? '12', 10),
   },
 });

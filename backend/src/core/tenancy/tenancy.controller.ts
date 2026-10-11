@@ -1,6 +1,8 @@
 import { BadRequestException, Controller, Get } from '@nestjs/common';
+import { Public } from '../auth/decorators';
 import { currentTenant } from './tenant-context';
 
+@Public() // the sign-in page needs the school's name before anyone signs in
 @Controller('tenant')
 export class TenancyController {
   /** Which school is this request for? Used by the frontend and for checks. */

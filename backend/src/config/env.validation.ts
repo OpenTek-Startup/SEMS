@@ -6,6 +6,7 @@ import {
   IsOptional,
   IsString,
   IsUrl,
+  Matches,
   Max,
   Min,
   MinLength,
@@ -48,7 +49,20 @@ class EnvironmentVariables {
 
   @IsOptional()
   @IsString()
+  @Matches(/^\d+[smhd]?$/, { message: 'JWT_EXPIRES_IN must look like 15m, 900, 1h or 1d' })
   JWT_EXPIRES_IN?: string;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(1440)
+  SESSION_IDLE_MINUTES?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(720)
+  SESSION_MAX_HOURS?: number;
 }
 
 /**
