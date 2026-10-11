@@ -77,6 +77,7 @@ model Tenant {
   userRoles       UserRole[]
   rolePermissions RolePermission[]
   auditLogs       AuditLog[]
+  sessions        Session[]
 
   @@map("tenants")
 }
@@ -102,12 +103,45 @@ model User {
   tenant    Tenant?    @relation(fields: [tenantId], references: [id], onDelete: Restrict)
   roles     UserRole[]
   auditLogs AuditLog[]
+  sessions  Session[]
 
   // Email is unique per school. (Super Admin emails are checked in code,
   // because PostgreSQL treats NULL tenant_id values as distinct.)
   @@unique([tenantId, email])
   @@index([email])
   @@map("users")
+}
+
+/// One signed-in browser session (FR-ID-01, FR-ID-03 session timeout).
+/// Holds the current refresh token as a SHA-256 hash, never the token itself.
+/// Rotated on every refresh; the previous hash is kept so a stolen, already
+/// used token can be detected and the whole session revoked.
+model Session {
+  id                String    @id @default(uuid()) @db.Uuid
+  /// NULL for platform (Super Admin) sessions, like users.tenant_id.
+  tenantId          String?   @map("tenant_id") @db.Uuid
+  userId            String    @map("user_id") @db.Uuid
+  refreshTokenHash  String    @unique @map("refresh_token_hash")
+  previousTokenHash String?   @unique @map("previous_token_hash")
+  rotatedAt         DateTime? @map("rotated_at") @db.Timestamptz(3)
+  /// Last authenticated request; drives the 15-minute idle timeout.
+  lastActiveAt      DateTime  @default(now()) @map("last_active_at") @db.Timestamptz(3)
+  /// Absolute end of the session, whatever the activity.
+  expiresAt         DateTime  @map("expires_at") @db.Timestamptz(3)
+  revokedAt         DateTime? @map("revoked_at") @db.Timestamptz(3)
+  /// logout | idle | password_changed | token_reuse | account_disabled
+  revokedReason     String?   @map("revoked_reason")
+  userAgent         String?   @map("user_agent")
+  ipAddress         String?   @map("ip_address")
+  createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt         DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  user   User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tenant Tenant? @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+
+  @@index([userId])
+  @@index([tenantId])
+  @@map("sessions")
 }
 
 // ----------------------------------------------------------------- RBAC
