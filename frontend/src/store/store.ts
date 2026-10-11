@@ -1,10 +1,12 @@
 import { configureStore } from "@reduxjs/toolkit";
 import { baseApi } from "@/lib/api/baseApi";
+import authReducer from "@/lib/auth/authSlice";
 
 // A new store per request/browser session (recommended for Next.js App Router).
 export const makeStore = () =>
   configureStore({
     reducer: {
+      auth: authReducer,
       [baseApi.reducerPath]: baseApi.reducer,
     },
     middleware: (getDefaultMiddleware) =>
