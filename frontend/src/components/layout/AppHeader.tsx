@@ -10,6 +10,7 @@ import { secondaryButtonClass } from "@/components/ui/styles";
 const NAV = [
   { href: "/dashboard", label: "Dashboard", permission: null },
   { href: "/users", label: "Users", permission: PERMISSIONS.userView },
+  { href: "/audit", label: "Audit log", permission: PERMISSIONS.auditView },
 ] as const;
 
 /**

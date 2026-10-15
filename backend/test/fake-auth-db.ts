@@ -16,10 +16,16 @@ function matches(row: Row, where: Row = {}): boolean {
     if (expected === null) return actual === null || actual === undefined;
     if (expected instanceof Date) return actual?.getTime() === expected.getTime();
     if (typeof expected === 'object') {
-      if ('in' in expected) return (expected.in as unknown[]).includes(actual);
-      if ('not' in expected) return actual !== expected.not;
-      if ('gte' in expected) return actual >= expected.gte;
       if ('path' in expected) return actual?.[expected.path[0]] === expected.equals;
+      // Every operator present must hold (e.g. { gte, lt } for a date range).
+      const checks: boolean[] = [];
+      if ('in' in expected) checks.push((expected.in as unknown[]).includes(actual));
+      if ('not' in expected) checks.push(actual !== expected.not);
+      if ('gte' in expected) checks.push(actual >= expected.gte);
+      if ('lt' in expected) checks.push(actual < expected.lt);
+      if ('lte' in expected) checks.push(actual <= expected.lte);
+      if ('startsWith' in expected) checks.push(typeof actual === 'string' && actual.startsWith(expected.startsWith));
+      return checks.length > 0 && checks.every(Boolean);
     }
     return actual === expected;
   });
@@ -183,11 +189,26 @@ export class FakeAuthDb {
 
   readonly auditLog = {
     create: async ({ data }: Row) => {
-      const row = { id: randomUUID(), createdAt: new Date(), ...data };
+      const row = { id: randomUUID(), createdAt: new Date(), seq: this.audit.length, ...data };
       this.audit.push(row);
       return row;
     },
-    count: async ({ where }: Row) => this.audit.filter((a) => matches(a, where)).length,
+    count: async ({ where }: Row = {}) => this.audit.filter((a) => matches(a, where)).length,
+    /** Newest first (createdAt, then insertion order), with the actor joined. */
+    findMany: async ({ where, skip = 0, take }: Row = {}) =>
+      this.audit
+        .filter((a) => matches(a, where))
+        .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime() || b.seq - a.seq)
+        .slice(skip, take === undefined ? undefined : skip + take)
+        .map((a) => {
+          const actor = this.users.find((u) => u.id === a.actorUserId);
+          return {
+            ...a,
+            actor: actor
+              ? { id: actor.id, firstName: actor.firstName, lastName: actor.lastName, email: actor.email }
+              : null,
+          };
+        }),
   };
 
   actions(): string[] {
