@@ -8,6 +8,7 @@ import { AuditModule } from './core/audit/audit.module';
 import { AuthModule } from './core/auth/auth.module';
 import { HealthModule } from './modules/health/health.module';
 import { UsersModule } from './modules/users/users.module';
+import { AuditViewerModule } from './modules/audit/audit-viewer.module';
 
 @Module({
   imports: [
@@ -27,6 +28,7 @@ import { UsersModule } from './modules/users/users.module';
     // Feature modules
     HealthModule,
     UsersModule,
+    AuditViewerModule,
   ],
 })
 export class AppModule {}

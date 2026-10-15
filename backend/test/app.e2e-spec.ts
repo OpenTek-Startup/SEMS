@@ -167,7 +167,13 @@ describe('YESE API (e2e)', () => {
     const ROLE_ADMIN = 'a0000000-0000-4000-8000-000000000001';
     const ROLE_TEACHER = 'a0000000-0000-4000-8000-000000000002';
     const ROLE_SUNRISE_ADMIN = 'a0000000-0000-4000-8000-000000000003';
-    const ADMIN_PERMISSIONS = ['core.role.manage', 'core.user.manage', 'core.user.view', 'student.record.view'];
+    const ADMIN_PERMISSIONS = [
+      'core.audit.view',
+      'core.role.manage',
+      'core.user.manage',
+      'core.user.view',
+      'student.record.view',
+    ];
     let passwordHash: string;
 
     const http = () => request(app.getHttpServer());
@@ -640,6 +646,157 @@ describe('YESE API (e2e)', () => {
           .send({ status: 'deleted' })
           .expect(400);
       });
+    });
+
+    describe('audit log', () => {
+      async function headersFor(email: string, school = 'northfield', password = PASSWORD) {
+        const { token } = await signIn(email, school, password);
+        return { 'X-Tenant': school, Authorization: `Bearer ${token}` };
+      }
+      const userId = (email: string) => fakeDb.users.find((u) => u.email === email)!.id as string;
+      type Item = { action: string; actor: { email: string } | null; target: { email: string } | null; id: string };
+
+      it('needs core.audit.view', async () => {
+        const teacher = await headersFor('teacher@northfield.school');
+        const res = await http().get('/api/audit').set(teacher).expect(403);
+        expect(res.body.error.code).toBe('PERMISSION_DENIED');
+      });
+
+      it("shows only this school's events, newest first, with names", async () => {
+        await headersFor('admin@sunrise.school', 'sunrise'); // a Sunrise event that must stay invisible
+        const admin = await headersFor('admin@northfield.school');
+        await http()
+          .post('/api/users')
+          .set(admin)
+          .send({ email: 'kofi@northfield.school', firstName: 'Kofi', lastName: 'Asante', roleIds: [ROLE_TEACHER] })
+          .expect(201);
+
+        const res = await http().get('/api/audit').set(admin).expect(200);
+        const items = res.body.data.items as Item[];
+        expect(items[0]).toMatchObject({
+          action: 'user.created',
+          actor: { email: 'admin@northfield.school' },
+          target: { email: 'kofi@northfield.school' },
+        });
+        expect(items.map((i) => i.action)).toContain('auth.login.success');
+        expect(items.every((i) => i.actor?.email !== 'admin@sunrise.school')).toBe(true);
+        expect(res.body.data).toMatchObject({ page: 1, pageSize: 25, total: items.length });
+      });
+
+      it('filters by category, exact action, person and date, and pages', async () => {
+        await headersFor('teacher@northfield.school');
+        const admin = await headersFor('admin@northfield.school');
+        await http()
+          .post(`/api/users/${userId('teacher@northfield.school')}/reset-password`)
+          .set(admin)
+          .expect(200);
+        const get = (query: string) => http().get(`/api/audit${query}`).set(admin).expect(200);
+
+        const users = (await get('?action=user.')).body.data.items as Item[];
+        expect(users.map((i) => i.action)).toEqual(['user.password.reset']);
+
+        const logins = (await get('?action=auth.login.success')).body.data;
+        expect(logins.total).toBe(2);
+
+        const byTeacher = (await get(`?actorUserId=${userId('teacher@northfield.school')}`)).body.data.items as Item[];
+        expect(byTeacher.length).toBeGreaterThan(0);
+        expect(byTeacher.every((i) => i.actor?.email === 'teacher@northfield.school')).toBe(true);
+
+        expect((await get('?from=2099-01-01')).body.data.total).toBe(0);
+        const today = new Date().toISOString().slice(0, 10);
+        expect((await get(`?from=${today}&to=${today}`)).body.data.total).toBe(3);
+
+        const first = (await get('?pageSize=1&page=1')).body.data;
+        const second = (await get('?pageSize=1&page=2')).body.data;
+        expect(first.items).toHaveLength(1);
+        expect(second.items).toHaveLength(1);
+        expect(first.items[0].id).not.toBe(second.items[0].id);
+      });
+
+      it('rejects bad filters', async () => {
+        const admin = await headersFor('admin@northfield.school');
+        await http().get('/api/audit?action=Not%20An%20Action').set(admin).expect(400);
+        const range = await http().get('/api/audit?from=2026-10-15&to=2026-10-01').set(admin).expect(400);
+        expect(range.body.error.code).toBe('INVALID_FILTER');
+        await http().get('/api/audit?pageSize=500').set(admin).expect(400);
+        await http().get('/api/audit?actorUserId=nope').set(admin).expect(400);
+        await http().get('/api/audit?unknown=1').set(admin).expect(400);
+      });
+    });
+
+    it('Phase 1, end to end: first sign-in, a new teacher, a role, isolation and the audit trail', async () => {
+      const admin = fakeDb.users.find((u) => u.email === 'admin@northfield.school')!;
+      admin.mustChangePassword = true; // a freshly seeded administrator
+
+      // 1. The administrator signs in and must replace the temporary password first.
+      const first = await signIn('admin@northfield.school');
+      const adminAuth = { 'X-Tenant': 'northfield', Authorization: `Bearer ${first.token}` };
+      expect((await http().get('/api/users').set(adminAuth).expect(403)).body.error.code).toBe(
+        'PASSWORD_CHANGE_REQUIRED',
+      );
+      await http()
+        .post('/api/auth/change-password')
+        .set(adminAuth)
+        .send({ currentPassword: PASSWORD, newPassword: 'AdminNew2026' })
+        .expect(200);
+
+      // 2. They create a teacher, who gets a one-time password.
+      const created = await http()
+        .post('/api/users')
+        .set(adminAuth)
+        .send({ email: 'kofi@northfield.school', firstName: 'Kofi', lastName: 'Asante', roleIds: [ROLE_TEACHER] })
+        .expect(201);
+      const { temporaryPassword, user: kofi } = created.body.data;
+
+      // 3. The teacher signs in, chooses a password, and cannot administer users.
+      const t = await signIn('kofi@northfield.school', 'northfield', temporaryPassword);
+      const teacherAuth = { 'X-Tenant': 'northfield', Authorization: `Bearer ${t.token}` };
+      await http()
+        .post('/api/auth/change-password')
+        .set(teacherAuth)
+        .send({ currentPassword: temporaryPassword, newPassword: 'KofiNew2026' })
+        .expect(200);
+      expect((await http().get('/api/users').set(teacherAuth).expect(403)).body.error.code).toBe('PERMISSION_DENIED');
+
+      // 4. Given the Administrator role, the very next request is allowed.
+      await http()
+        .put(`/api/users/${kofi.id}/roles`)
+        .set(adminAuth)
+        .send({ roleIds: [ROLE_TEACHER, ROLE_ADMIN] })
+        .expect(200);
+      await http().get('/api/users').set(teacherAuth).expect(200);
+
+      // 5. Sunrise sees none of it, and Kofi's token is useless there.
+      const sunrise = await signIn('admin@sunrise.school', 'sunrise');
+      const sunriseAuth = { 'X-Tenant': 'sunrise', Authorization: `Bearer ${sunrise.token}` };
+      const sunriseUsers = (await http().get('/api/users').set(sunriseAuth).expect(200)).body.data as { email: string }[];
+      expect(sunriseUsers.map((u) => u.email)).not.toContain('kofi@northfield.school');
+      expect((await http().get('/api/audit').set(sunriseAuth).expect(200)).body.data.items).toEqual(
+        expect.not.arrayContaining([expect.objectContaining({ action: 'user.created' })]),
+      );
+      await http().get('/api/users').set({ ...teacherAuth, 'X-Tenant': 'sunrise' }).expect(401);
+
+      // 6. Every step is in Northfield's audit trail.
+      const trail = (await http().get('/api/audit?pageSize=100').set(adminAuth).expect(200)).body.data
+        .items as { action: string; actor: { email: string } | null; target: { email: string } | null }[];
+      const actions = trail.map((i) => i.action);
+      expect(actions).toEqual(
+        expect.arrayContaining([
+          'auth.login.success',
+          'auth.password.changed',
+          'user.created',
+          'user.roles.updated',
+        ]),
+      );
+      expect(actions.filter((a) => a === 'auth.password.changed')).toHaveLength(2);
+      expect(trail.find((i) => i.action === 'user.roles.updated')).toMatchObject({
+        actor: { email: 'admin@northfield.school' },
+        target: { email: 'kofi@northfield.school' },
+      });
+
+      // 7. Signing out ends the session.
+      await http().post('/api/auth/logout').set('X-Tenant', 'northfield').set('Cookie', first.cookie).expect(200);
+      await http().get('/api/users').set(adminAuth).expect(401);
     });
   });
 });
