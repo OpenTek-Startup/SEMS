@@ -10,6 +10,25 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  guard:
+    name: Guard (no hidden code)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      # Injected code hides at the end of very long lines (seen twice in this repo).
+      # Only reads files; nothing is executed.
+      - name: Refuse lines longer than 1000 characters
+        run: |
+          bad=$(git ls-files \
+            | grep -vE '(pnpm-lock\.yaml|\.svg|\.png|\.ico|\.jpg|\.pdf|\.docx|\.zip)$' \
+            | xargs -d '\n' awk 'length($0) > 1000 { print FILENAME ":" FNR " (" length($0) " characters)"; nextfile }')
+          if [ -n "$bad" ]; then
+            echo "::error::Possible hidden code. Lines longer than 1000 characters:"
+            echo "$bad"
+            exit 1
+          fi
+          echo "No hidden long lines."
+
   backend:
     name: Backend (lint, tests, build)
     runs-on: ubuntu-latest
