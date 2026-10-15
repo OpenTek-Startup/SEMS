@@ -291,6 +291,11 @@ export class AuthService {
 
   // ----------------------------------------------------- profile/password
 
+  /** Permission codes granted to a user through all of their roles. */
+  async permissionsOf(userId: string): Promise<Set<string>> {
+    return new Set((await this.userView(userId)).permissions);
+  }
+
   async userView(userId: string): Promise<AuthUserView> {
     const row = await this.prisma.user.findUnique({
       where: { id: userId },

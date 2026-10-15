@@ -6,6 +6,7 @@ import { App } from 'supertest/types';
 import { AppModule } from './../src/app.module';
 import { configureApp } from './../src/app.setup';
 import { PrismaService } from './../src/prisma/prisma.service';
+import { TenantPrismaService } from './../src/core/tenancy/tenant-prisma.service';
 import { FakeAuthDb } from './fake-auth-db';
 
 // The e2e suite runs without a real database (also in CI):
@@ -42,6 +43,9 @@ describe('YESE API (e2e)', () => {
         session: fakeDb.session,
         auditLog: fakeDb.auditLog,
       })
+      // School-scoped client: the fake behind the REAL tenant-scope rules.
+      .overrideProvider(TenantPrismaService)
+      .useValue({ db: fakeDb.scoped() })
       .compile();
 
     app = moduleFixture.createNestApplication();
@@ -160,6 +164,10 @@ describe('YESE API (e2e)', () => {
       status: 'active',
     };
     const PASSWORD = 'Northfield2026';
+    const ROLE_ADMIN = 'a0000000-0000-4000-8000-000000000001';
+    const ROLE_TEACHER = 'a0000000-0000-4000-8000-000000000002';
+    const ROLE_SUNRISE_ADMIN = 'a0000000-0000-4000-8000-000000000003';
+    const ADMIN_PERMISSIONS = ['core.role.manage', 'core.user.manage', 'core.user.view', 'student.record.view'];
     let passwordHash: string;
 
     const http = () => request(app.getHttpServer());
@@ -186,17 +194,27 @@ describe('YESE API (e2e)', () => {
       fakeDb.reset();
       fakeDb.tenants = [NORTHFIELD, SUNRISE];
       fakeDb.roles = [
+        { id: ROLE_ADMIN, tenantId: NORTHFIELD.id, name: 'Administrator', archetype: 'admin', permissions: ADMIN_PERMISSIONS },
         {
-          id: 'role-admin',
+          id: ROLE_TEACHER,
           tenantId: NORTHFIELD.id,
-          name: 'Administrator',
-          archetype: 'admin',
-          permissions: ['core.user.view', 'student.record.view'],
+          name: 'Staff / Teacher',
+          archetype: 'staff',
+          permissions: ['attendance.register.take', 'student.record.view'],
         },
+        { id: ROLE_SUNRISE_ADMIN, tenantId: SUNRISE.id, name: 'Administrator', archetype: 'admin', permissions: ADMIN_PERMISSIONS },
       ];
       fakeDb.addUser(
         { tenantId: NORTHFIELD.id, email: 'admin@northfield.school', firstName: 'M.', lastName: 'Ndzana', passwordHash },
-        ['role-admin'],
+        [ROLE_ADMIN],
+      );
+      fakeDb.addUser(
+        { tenantId: NORTHFIELD.id, email: 'teacher@northfield.school', firstName: 'R.', lastName: 'Fon', passwordHash },
+        [ROLE_TEACHER],
+      );
+      fakeDb.addUser(
+        { tenantId: SUNRISE.id, email: 'admin@sunrise.school', firstName: 'School', lastName: 'Administrator', passwordHash },
+        [ROLE_SUNRISE_ADMIN],
       );
       fakeDb.addUser({
         tenantId: NORTHFIELD.id,
@@ -236,7 +254,7 @@ describe('YESE API (e2e)', () => {
           email: 'admin@northfield.school',
           school: { slug: 'northfield' },
           roles: [{ name: 'Administrator', archetype: 'admin' }],
-          permissions: ['core.user.view', 'student.record.view'],
+          permissions: ADMIN_PERMISSIONS,
           mustChangePassword: false,
         },
       });
@@ -453,6 +471,175 @@ describe('YESE API (e2e)', () => {
         .set('X-Tenant', 'northfield')
         .send({ email: 'not-an-email', password: '' })
         .expect(400);
+    });
+
+    describe('permissions and user administration', () => {
+      const NF = { 'X-Tenant': 'northfield' };
+
+      async function headersFor(email: string, school = 'northfield', password = PASSWORD) {
+        const { token } = await signIn(email, school, password);
+        return { 'X-Tenant': school, Authorization: `Bearer ${token}` };
+      }
+      const userId = (email: string) => fakeDb.users.find((u) => u.email === email)!.id as string;
+
+      it('refuses a route to anyone without the permission (403 PERMISSION_DENIED)', async () => {
+        const teacher = await headersFor('teacher@northfield.school');
+        const res = await http().get('/api/users').set(teacher).expect(403);
+        expect(res.body.error.code).toBe('PERMISSION_DENIED');
+        expect(res.body.error.message).toContain('core.user.view');
+
+        // The platform Super Admin holds no school permissions either.
+        const { token } = await signIn('superadmin@yese.local', null);
+        await http().get('/api/users').set('Authorization', `Bearer ${token}`).expect(403);
+      });
+
+      it("lists only the current school's users and roles", async () => {
+        const admin = await headersFor('admin@northfield.school');
+
+        const users = await http().get('/api/users').set(admin).expect(200);
+        const emails = (users.body.data as { email: string }[]).map((u) => u.email);
+        expect(emails).toEqual(
+          expect.arrayContaining(['admin@northfield.school', 'teacher@northfield.school']),
+        );
+        expect(emails).not.toContain('admin@sunrise.school');
+        expect(emails).not.toContain('superadmin@yese.local');
+        expect(users.body.data[0]).not.toHaveProperty('passwordHash');
+
+        const roles = await http().get('/api/roles').set(admin).expect(200);
+        expect((roles.body.data as { name: string }[]).map((r) => r.name)).toEqual([
+          'Administrator',
+          'Staff / Teacher',
+        ]);
+      });
+
+      it('creates a user with a one-time password that must be changed', async () => {
+        const admin = await headersFor('admin@northfield.school');
+
+        const res = await http()
+          .post('/api/users')
+          .set(admin)
+          .send({ email: 'New.Teacher@Northfield.school', firstName: 'Ada', lastName: 'Mbah', roleIds: [ROLE_TEACHER] })
+          .expect(201);
+        const { user, temporaryPassword } = res.body.data;
+        expect(temporaryPassword).toMatch(/^[A-Za-z2-9]{4}-[A-Za-z2-9]{4}-[A-Za-z2-9]{4}$/);
+        expect(user).toMatchObject({
+          email: 'new.teacher@northfield.school',
+          mustChangePassword: true,
+          roles: [{ name: 'Staff / Teacher' }],
+        });
+        expect(fakeDb.users.find((u) => u.id === user.id)?.tenantId).toBe(NORTHFIELD.id);
+        expect(fakeDb.actions()).toContain('user.created');
+
+        const login = await signIn('new.teacher@northfield.school', 'northfield', temporaryPassword);
+        expect(login.res.body.data.user.mustChangePassword).toBe(true);
+
+        const again = await http()
+          .post('/api/users')
+          .set(admin)
+          .send({ email: 'new.teacher@northfield.school', firstName: 'Ada', lastName: 'Mbah', roleIds: [] })
+          .expect(409);
+        expect(again.body.error.code).toBe('EMAIL_TAKEN');
+      });
+
+      it("cannot use another school's role or reach another school's user", async () => {
+        const admin = await headersFor('admin@northfield.school');
+
+        const role = await http()
+          .post('/api/users')
+          .set(admin)
+          .send({ email: 'x@northfield.school', firstName: 'X', lastName: 'Y', roleIds: [ROLE_SUNRISE_ADMIN] })
+          .expect(400);
+        expect(role.body.error.code).toBe('UNKNOWN_ROLE');
+
+        const sunriseAdmin = userId('admin@sunrise.school');
+        const res = await http()
+          .patch(`/api/users/${sunriseAdmin}/status`)
+          .set(admin)
+          .send({ status: 'disabled' })
+          .expect(404);
+        expect(res.body.error.code).toBe('USER_NOT_FOUND');
+        expect(fakeDb.users.find((u) => u.id === sunriseAdmin)?.status).toBe('active');
+      });
+
+      it('disabling a user signs them out at once', async () => {
+        const teacher = await headersFor('teacher@northfield.school');
+        const admin = await headersFor('admin@northfield.school');
+        const id = userId('teacher@northfield.school');
+
+        const res = await http().patch(`/api/users/${id}/status`).set(admin).send({ status: 'disabled' }).expect(200);
+        expect(res.body.data.status).toBe('disabled');
+        await http().get('/api/auth/me').set(teacher).expect(401);
+        expect(fakeDb.actions()).toContain('user.disabled');
+
+        await http().patch(`/api/users/${id}/status`).set(admin).send({ status: 'active' }).expect(200);
+      });
+
+      it('a role change applies on the very next request', async () => {
+        const teacher = await headersFor('teacher@northfield.school');
+        const admin = await headersFor('admin@northfield.school');
+        await http().get('/api/users').set(teacher).expect(403);
+
+        const res = await http()
+          .put(`/api/users/${userId('teacher@northfield.school')}/roles`)
+          .set(admin)
+          .send({ roleIds: [ROLE_TEACHER, ROLE_ADMIN] })
+          .expect(200);
+        expect((res.body.data.roles as { name: string }[]).map((r) => r.name)).toEqual([
+          'Administrator',
+          'Staff / Teacher',
+        ]);
+        expect(fakeDb.userRoles.every((ur) => ur.tenantId === NORTHFIELD.id || ur.roleId === ROLE_SUNRISE_ADMIN)).toBe(true);
+
+        await http().get('/api/users').set(teacher).expect(200);
+        expect(fakeDb.actions()).toContain('user.roles.updated');
+      });
+
+      it('reset password: one-time password, old sessions end, change forced (FR-ID-02)', async () => {
+        const teacher = await headersFor('teacher@northfield.school');
+        const admin = await headersFor('admin@northfield.school');
+
+        const res = await http()
+          .post(`/api/users/${userId('teacher@northfield.school')}/reset-password`)
+          .set(admin)
+          .expect(200);
+        const { temporaryPassword } = res.body.data;
+        expect(res.body.data.user.mustChangePassword).toBe(true);
+
+        await http().get('/api/auth/me').set(teacher).expect(401);
+        await http()
+          .post('/api/auth/login')
+          .set(NF)
+          .send({ email: 'teacher@northfield.school', password: PASSWORD })
+          .expect(401);
+        const login = await signIn('teacher@northfield.school', 'northfield', temporaryPassword);
+        expect(login.res.body.data.user.mustChangePassword).toBe(true);
+        expect(fakeDb.actions()).toContain('user.password.reset');
+      });
+
+      it('an administrator cannot disable, demote or reset themselves', async () => {
+        const admin = await headersFor('admin@northfield.school');
+        const me = userId('admin@northfield.school');
+
+        const status = await http().patch(`/api/users/${me}/status`).set(admin).send({ status: 'disabled' }).expect(400);
+        expect(status.body.error.code).toBe('CANNOT_CHANGE_SELF');
+        await http().put(`/api/users/${me}/roles`).set(admin).send({ roleIds: [] }).expect(400);
+        await http().post(`/api/users/${me}/reset-password`).set(admin).expect(400);
+      });
+
+      it('validates ids and bodies', async () => {
+        const admin = await headersFor('admin@northfield.school');
+        await http().patch('/api/users/not-a-uuid/status').set(admin).send({ status: 'disabled' }).expect(400);
+        await http()
+          .post('/api/users')
+          .set(admin)
+          .send({ email: 'y@northfield.school', firstName: 'Y', lastName: 'Z', roleIds: ['x'] })
+          .expect(400);
+        await http()
+          .patch(`/api/users/${userId('teacher@northfield.school')}/status`)
+          .set(admin)
+          .send({ status: 'deleted' })
+          .expect(400);
+      });
     });
   });
 });

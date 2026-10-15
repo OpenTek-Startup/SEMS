@@ -27,7 +27,8 @@ export type AuthErrorCode =
   | 'PASSWORD_CHANGE_REQUIRED'
   | 'WRONG_CURRENT_PASSWORD'
   | 'WEAK_PASSWORD'
-  | 'TOO_MANY_ATTEMPTS';
+  | 'TOO_MANY_ATTEMPTS'
+  | 'PERMISSION_DENIED';
 
 export function unauthorized(code: AuthErrorCode, message: string) {
   return new UnauthorizedException({ statusCode: 401, error: 'Unauthorized', code, message });
