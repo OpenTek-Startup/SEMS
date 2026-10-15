@@ -9,6 +9,7 @@ export const PERMISSIONS = {
   userView: "core.user.view",
   userManage: "core.user.manage",
   roleManage: "core.role.manage",
+  auditView: "core.audit.view",
 } as const;
 
 /** True when the user holds every listed permission. */

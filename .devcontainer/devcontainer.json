@@ -1,0 +1,13 @@
+{
+  // GitHub Codespaces / VS Code Dev Containers: the project runs in the cloud,
+  // with the versions CI uses (Node 24, pnpm from package.json).
+  "name": "YESE",
+  "image": "mcr.microsoft.com/devcontainers/javascript-node:24",
+  "postCreateCommand": "corepack enable && cd backend && pnpm install && cd ../frontend && pnpm install",
+  "forwardPorts": [3000, 3001],
+  "customizations": {
+    "vscode": {
+      "extensions": ["Prisma.prisma"]
+    }
+  }
+}
