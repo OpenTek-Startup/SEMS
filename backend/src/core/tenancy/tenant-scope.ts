@@ -52,7 +52,7 @@ function scopeWhere(where: Record<string, any> | undefined, key: string, tenantI
   if (where && where[key] !== undefined && where[key] !== tenantId) {
     throw new TenantScopeError(`Query tried to reach another school (${key} mismatch)`);
   }
-  return { ...(where ?? {}), [key]: tenantId };
+  return { ...where, [key]: tenantId };
 }
 
 function stampData(data: Record<string, any>, tenantId: string) {
@@ -77,7 +77,7 @@ export function scopeArgs(
   if (model === 'Tenant') {
     if (!tenantId) throw new TenantScopeError('No school in this request context');
     if (WHERE_OPS.has(operation) && !operation.startsWith('delete')) {
-      return { ...(args ?? {}), where: scopeWhere(args?.where, 'id', tenantId) };
+      return { ...args, where: scopeWhere(args?.where, 'id', tenantId) };
     }
     throw new TenantScopeError(`Operation ${operation} on Tenant is not allowed in the school-scoped client`);
   }
@@ -89,7 +89,7 @@ export function scopeArgs(
   }
 
   if (WHERE_OPS.has(operation)) {
-    return { ...(args ?? {}), where: scopeWhere(args?.where, 'tenantId', tenantId) };
+    return { ...args, where: scopeWhere(args?.where, 'tenantId', tenantId) };
   }
 
   if (CREATE_OPS.has(operation)) {

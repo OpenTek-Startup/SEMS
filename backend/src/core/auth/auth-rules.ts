@@ -95,6 +95,11 @@ export function passwordProblems(
   return problems;
 }
 
+/** Required permission codes the caller does not hold (empty = allowed). */
+export function missingPermissions(required: readonly string[], granted: ReadonlySet<string>): string[] {
+  return required.filter((code) => !granted.has(code));
+}
+
 // ------------------------------------------------------------ user view
 
 /** The signed-in user as returned by /auth/login, /auth/refresh and /auth/me. */

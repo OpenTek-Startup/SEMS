@@ -1,9 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useLogoutMutation } from "@/lib/api/authApi";
 import { useAppSelector } from "@/store/hooks";
-import { secondaryButtonClass } from "@/components/ui/styles";
+import AppHeader from "@/components/layout/AppHeader";
 
 /** Groups "student.record.view" style codes by their module (first segment). */
 function byModule(permissions: string[]): [string, string[]][] {
@@ -22,40 +21,11 @@ function byModule(permissions: string[]): [string, string[]][] {
  */
 export default function Dashboard() {
   const user = useAppSelector((state) => state.auth.user);
-  const [logout, { isLoading }] = useLogoutMutation();
-
   if (!user) return null;
-  const roleNames = user.roles.map((r) => r.name).join(", ") || "No role yet";
 
   return (
     <div className="flex flex-1 flex-col">
-      <header className="flex items-center justify-between gap-4 border-b border-line bg-white px-6 py-3">
-        <div className="flex items-center gap-3">
-          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-brand font-bold text-white">
-            Y
-          </div>
-          <div>
-            <p className="text-sm font-semibold">{user.school?.name ?? "YESE platform"}</p>
-            <p className="text-xs text-muted">YESE · {roleNames}</p>
-          </div>
-        </div>
-        <div className="flex items-center gap-4">
-          <div className="hidden text-right sm:block">
-            <p className="text-sm font-semibold">
-              {user.firstName} {user.lastName}
-            </p>
-            <p className="text-xs text-muted">{user.email}</p>
-          </div>
-          <button
-            type="button"
-            onClick={() => void logout()}
-            disabled={isLoading}
-            className={secondaryButtonClass}
-          >
-            {isLoading ? "Signing out…" : "Sign out"}
-          </button>
-        </div>
-      </header>
+      <AppHeader />
 
       <main className="mx-auto w-full max-w-4xl flex-1 px-6 py-8">
         <h1 className="text-2xl font-semibold">Welcome, {user.firstName}</h1>

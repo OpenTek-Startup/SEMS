@@ -2,6 +2,7 @@ import {
   bearerToken,
   hashToken,
   isIdle,
+  missingPermissions,
   newRefreshToken,
   normalizeEmail,
   parseDurationSeconds,
@@ -65,6 +66,13 @@ describe('auth rules', () => {
     expect(passwordProblems('admin1@x.school', { email: 'Admin1@X.school' })).toContain(
       'Do not use your email address as your password.',
     );
+  });
+
+  it('lists the required permissions a user is missing', () => {
+    const granted = new Set(['core.user.view', 'student.record.view']);
+    expect(missingPermissions(['core.user.view'], granted)).toEqual([]);
+    expect(missingPermissions(['core.user.view', 'core.user.manage'], granted)).toEqual(['core.user.manage']);
+    expect(missingPermissions([], granted)).toEqual([]);
   });
 
   it('flattens roles into a sorted, unique permission list', () => {

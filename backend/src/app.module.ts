@@ -7,6 +7,7 @@ import { TenancyModule } from './core/tenancy/tenancy.module';
 import { AuditModule } from './core/audit/audit.module';
 import { AuthModule } from './core/auth/auth.module';
 import { HealthModule } from './modules/health/health.module';
+import { UsersModule } from './modules/users/users.module';
 
 @Module({
   imports: [
@@ -25,6 +26,7 @@ import { HealthModule } from './modules/health/health.module';
 
     // Feature modules
     HealthModule,
+    UsersModule,
   ],
 })
 export class AppModule {}

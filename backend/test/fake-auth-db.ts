@@ -1,9 +1,12 @@
 import { randomUUID } from 'node:crypto';
+import { currentTenantId } from '../src/core/tenancy/tenant-context';
+import { scopeArgs } from '../src/core/tenancy/tenant-scope';
 
 /**
- * A tiny in-memory stand-in for the Prisma calls AuthService and AuditService
- * make, so the auth e2e tests run without a database (also in CI).
- * It understands only the `where` shapes those services use.
+ * A tiny in-memory stand-in for the Prisma calls the services make, so the
+ * e2e tests run without a database (also in CI). It understands only the
+ * `where` shapes those services use. `scoped()` puts the REAL tenant-scope
+ * rules in front of it, exactly like TenantPrismaService does.
  */
 type Row = Record<string, any>;
 
@@ -13,6 +16,7 @@ function matches(row: Row, where: Row = {}): boolean {
     if (expected === null) return actual === null || actual === undefined;
     if (expected instanceof Date) return actual?.getTime() === expected.getTime();
     if (typeof expected === 'object') {
+      if ('in' in expected) return (expected.in as unknown[]).includes(actual);
       if ('not' in expected) return actual !== expected.not;
       if ('gte' in expected) return actual >= expected.gte;
       if ('path' in expected) return actual?.[expected.path[0]] === expected.equals;
@@ -35,12 +39,17 @@ export interface FakeRole {
   permissions: string[];
 }
 
+interface FakeUserRole {
+  userId: string;
+  roleId: string;
+  tenantId: string;
+}
+
 export class FakeAuthDb {
   tenants: FakeTenant[] = [];
   users: Row[] = [];
   roles: FakeRole[] = [];
-  /** userId -> roleIds */
-  userRoles = new Map<string, string[]>();
+  userRoles: FakeUserRole[] = [];
   sessions: Row[] = [];
   audit: Row[] = [];
 
@@ -48,31 +57,35 @@ export class FakeAuthDb {
     this.tenants = [];
     this.users = [];
     this.roles = [];
-    this.userRoles.clear();
+    this.userRoles = [];
     this.sessions = [];
     this.audit = [];
   }
 
-  addUser(user: Row, roleIds: string[] = []) {
-    const row = {
+  addUser(user: Row, roleIds: string[] = []): Row {
+    const row: Row = {
       id: randomUUID(),
       tenantId: null,
       status: 'active',
       isSuperAdmin: false,
       mustChangePassword: false,
       lastLoginAt: null,
+      createdAt: new Date(),
       ...user,
     };
     this.users.push(row);
-    this.userRoles.set(row.id, roleIds);
+    for (const roleId of roleIds) {
+      this.userRoles.push({ userId: row.id, roleId, tenantId: row.tenantId });
+    }
     return row;
   }
 
-  /** User row enriched the way USER_VIEW_SELECT asks for it. */
+  /** User row enriched with tenant and roles (superset of every select used). */
   private userView(user: Row) {
     const tenant = this.tenants.find((t) => t.id === user.tenantId) ?? null;
-    const roles = (this.userRoles.get(user.id) ?? [])
-      .map((id) => this.roles.find((r) => r.id === id))
+    const roles = this.userRoles
+      .filter((ur) => ur.userId === user.id)
+      .map((ur) => this.roles.find((r) => r.id === ur.roleId))
       .filter((r): r is FakeRole => !!r)
       .map((r) => ({
         role: {
@@ -85,25 +98,55 @@ export class FakeAuthDb {
     return { ...user, tenant, roles };
   }
 
+  private roleView(role: FakeRole) {
+    return {
+      ...role,
+      description: null,
+      isSystem: role.archetype !== null,
+      permissions: role.permissions.map((code) => ({ permission: { code } })),
+    };
+  }
+
   private sessionView(session: Row) {
     const user = this.users.find((u) => u.id === session.userId);
     return { ...session, user: { ...user } };
   }
 
   readonly user = {
-    findFirst: async ({ where }: Row) => {
+    findFirst: async ({ where }: Row = {}) => {
       const user = this.users.find((u) => matches(u, where));
-      return user ? { ...user } : null;
+      return user ? this.userView(user) : null;
     },
     findUnique: async ({ where }: Row) => {
       const user = this.users.find((u) => matches(u, where));
       return user ? this.userView(user) : null;
     },
+    findMany: async ({ where }: Row = {}) =>
+      this.users.filter((u) => matches(u, where)).map((u) => this.userView(u)),
+    create: async ({ data }: Row) => this.userView(this.addUser(data)),
     update: async ({ where, data }: Row) => {
       const user = this.users.find((u) => matches(u, where));
       if (!user) throw new Error('user not found');
       Object.assign(user, data);
-      return { ...user };
+      return this.userView(user);
+    },
+  };
+
+  readonly role = {
+    findMany: async ({ where }: Row = {}) =>
+      this.roles.filter((r) => matches(r, where)).map((r) => this.roleView(r)),
+  };
+
+  readonly userRole = {
+    deleteMany: async ({ where }: Row = {}) => {
+      const before = this.userRoles.length;
+      this.userRoles = this.userRoles.filter((ur) => !matches(ur, where));
+      return { count: before - this.userRoles.length };
+    },
+    createMany: async ({ data }: Row) => {
+      const rows = (Array.isArray(data) ? data : [data]) as FakeUserRole[];
+      this.userRoles.push(...rows.map((r) => ({ ...r })));
+      return { count: rows.length };
     },
   };
 
@@ -149,5 +192,31 @@ export class FakeAuthDb {
 
   actions(): string[] {
     return this.audit.map((a) => a.action);
+  }
+
+  /**
+   * The same models seen through the real tenant-scope rules, standing in
+   * for TenantPrismaService.db in tests.
+   */
+  scoped() {
+    const models: Record<string, Row> = {
+      user: this.user,
+      role: this.role,
+      userRole: this.userRole,
+      session: this.session,
+      auditLog: this.auditLog,
+    };
+    const client: Row = {};
+    for (const [key, ops] of Object.entries(models)) {
+      const model = key[0].toUpperCase() + key.slice(1);
+      client[key] = Object.fromEntries(
+        Object.entries(ops).map(([op, fn]) => [
+          op,
+          (args?: Row) => (fn as (a?: Row) => Promise<unknown>)(scopeArgs(model, op, args, currentTenantId())),
+        ]),
+      );
+    }
+    client.$transaction = (fn: (tx: Row) => Promise<unknown>) => fn(client);
+    return client;
   }
 }
