@@ -29,18 +29,33 @@ const prisma = new PrismaClient({
 
 // ------------------------------------------------------------ catalogues
 
-const MODULES: { code: string; name: string; category: ModuleCategory; description: string }[] = [
-  { code: 'core', name: 'Core platform', category: 'core', description: 'Tenancy, users, roles, settings, audit' },
-  { code: 'student', name: 'Students', category: 'business', description: 'Student and guardian registry' },
-  { code: 'staff', name: 'Staff', category: 'business', description: 'Teaching and non-teaching staff' },
-  { code: 'academic', name: 'Academic structure', category: 'business', description: 'Years, terms, classes, subjects' },
-  { code: 'enrollment', name: 'Enrollment', category: 'business', description: 'Students into sections per year' },
-  { code: 'attendance', name: 'Attendance', category: 'business', description: 'Registers and attendance reports' },
-  { code: 'assessment', name: 'Assessment', category: 'business', description: 'Assessments, marks, validation, locking' },
-  { code: 'results', name: 'Results & report cards', category: 'business', description: 'Averages, ranks, report cards' },
-  { code: 'finance', name: 'Finance', category: 'business', description: 'Fees, invoices, payments, receipts' },
-  { code: 'comms', name: 'Communication', category: 'extension', description: 'Notifications, announcements, parent portal' },
+const MODULES: {
+  code: string;
+  name: string;
+  category: ModuleCategory;
+  description: string;
+  dependsOn: string[];
+}[] = [
+  { code: 'core', name: 'Core platform', category: 'core', description: 'Tenancy, users, roles, settings, audit', dependsOn: [] },
+  { code: 'student', name: 'Students', category: 'business', description: 'Student and guardian registry', dependsOn: [] },
+  { code: 'staff', name: 'Staff', category: 'business', description: 'Teaching and non-teaching staff', dependsOn: [] },
+  { code: 'academic', name: 'Academic structure', category: 'business', description: 'Years, terms, classes, subjects', dependsOn: [] },
+  { code: 'enrollment', name: 'Enrollment', category: 'business', description: 'Students into sections per year', dependsOn: ['student', 'academic'] },
+  { code: 'attendance', name: 'Attendance', category: 'business', description: 'Registers and attendance reports', dependsOn: ['enrollment'] },
+  { code: 'assessment', name: 'Assessment', category: 'business', description: 'Assessments, marks, validation, locking', dependsOn: ['academic', 'enrollment'] },
+  { code: 'results', name: 'Results & report cards', category: 'business', description: 'Averages, ranks, report cards', dependsOn: ['assessment'] },
+  { code: 'finance', name: 'Finance', category: 'business', description: 'Fees, invoices, payments, receipts', dependsOn: ['student'] },
+  { code: 'comms', name: 'Communication', category: 'extension', description: 'Notifications, announcements, parent portal', dependsOn: ['student'] },
 ];
+
+/**
+ * Demo activations (Module Registry). Core is always on and not listed.
+ * Northfield runs the full academic chain; Sunrise has only just started.
+ */
+const ACTIVE_MODULES: Record<string, string[]> = {
+  northfield: ['student', 'staff', 'academic', 'enrollment', 'attendance', 'assessment', 'results'],
+  sunrise: ['student', 'staff', 'academic'],
+};
 
 // code -> description. The module is the first segment of the code.
 const PERMISSIONS: Record<string, string> = {
@@ -160,7 +175,7 @@ async function main() {
   for (const m of MODULES) {
     const row = await prisma.module.upsert({
       where: { code: m.code },
-      update: { name: m.name, category: m.category, description: m.description },
+      update: { name: m.name, category: m.category, description: m.description, dependsOn: m.dependsOn },
       create: m,
     });
     moduleIds.set(m.code, row.id);
@@ -238,6 +253,16 @@ async function main() {
       create: { userId: admin.user.id, roleId: roleIds.get('admin')!, tenantId: tenant.id },
     });
     if (admin.created) createdAccounts.push(`${s.adminEmail}  (Administrator, ${s.slug})`);
+
+    // Module Registry: switch on the demo modules (only creates missing rows,
+    // so a Super Admin's later changes are never overwritten).
+    for (const moduleCode of ACTIVE_MODULES[s.slug] ?? []) {
+      await prisma.tenantModule.upsert({
+        where: { tenantId_moduleCode: { tenantId: tenant.id, moduleCode } },
+        update: {},
+        create: { tenantId: tenant.id, moduleCode, active: true },
+      });
+    }
   }
 
   // 5. Audit

@@ -8,6 +8,8 @@ import { configureApp } from './../src/app.setup';
 import { PrismaService } from './../src/prisma/prisma.service';
 import { TenantPrismaService } from './../src/core/tenancy/tenant-prisma.service';
 import { FakeAuthDb } from './fake-auth-db';
+import { RequireModule, RequirePermission } from './../src/core/auth/decorators';
+import { ModuleRegistryService } from './../src/core/modules/module-registry.service';
 
 // The e2e suite runs without a real database (also in CI):
 // the Prisma client is replaced by fakes whose answers we control.
@@ -25,6 +27,20 @@ class ProbeController {
   ok() {
     return { ok: true };
   }
+
+  /** A route of the Assessment module (closed while the module is inactive). */
+  @Get('assessment')
+  @RequireModule('assessment')
+  assessment() {
+    return { ok: true };
+  }
+
+  /** A route that needs a Students permission (no module gate). */
+  @Get('students')
+  @RequirePermission('student.record.view')
+  students() {
+    return { ok: true };
+  }
 }
 
 describe('YESE API (e2e)', () => {
@@ -38,7 +54,9 @@ describe('YESE API (e2e)', () => {
       .overrideProvider(PrismaService)
       .useValue({
         $queryRaw: queryRaw,
-        tenant: { findUnique: findTenant },
+        tenant: { findUnique: findTenant, findMany: fakeDb.tenant.findMany },
+        module: fakeDb.module,
+        tenantModule: fakeDb.tenantModule,
         user: fakeDb.user,
         session: fakeDb.session,
         auditLog: fakeDb.auditLog,
@@ -89,7 +107,7 @@ describe('YESE API (e2e)', () => {
   });
   describe('tenancy', () => {
     const school = (slug: string, status: 'active' | 'suspended') => ({
-      id: '11111111-1111-1111-1111-111111111111',
+      id: '11111111-1111-4111-8111-111111111111',
       slug,
       name: `School ${slug}`,
       type: 'secondary',
@@ -150,14 +168,14 @@ describe('YESE API (e2e)', () => {
 
   describe('authentication', () => {
     const NORTHFIELD = {
-      id: '11111111-1111-1111-1111-111111111111',
+      id: '11111111-1111-4111-8111-111111111111',
       slug: 'northfield',
       name: 'School northfield',
       type: 'secondary',
       status: 'active',
     };
     const SUNRISE = {
-      id: '22222222-2222-2222-2222-222222222222',
+      id: '22222222-2222-4222-8222-222222222222',
       slug: 'sunrise',
       name: 'School sunrise',
       type: 'secondary',
@@ -246,9 +264,21 @@ describe('YESE API (e2e)', () => {
         passwordHash,
         isSuperAdmin: true,
       });
-      findTenant.mockImplementation(({ where }: { where: { slug: string } }) =>
-        Promise.resolve([NORTHFIELD, SUNRISE].find((t) => t.slug === where.slug) ?? null),
+      findTenant.mockImplementation(({ where }: { where: { slug?: string; id?: string } }) =>
+        Promise.resolve([NORTHFIELD, SUNRISE].find((t) => t.slug === where.slug || t.id === where.id) ?? null),
       );
+
+      // Module Registry: a small catalogue; Northfield runs Students + Academic, Sunrise only Students.
+      fakeDb.modules = [
+        { code: 'core', name: 'Core platform', category: 'core', dependsOn: [] },
+        { code: 'student', name: 'Students', category: 'business', dependsOn: [] },
+        { code: 'academic', name: 'Academic structure', category: 'business', dependsOn: [] },
+        { code: 'enrollment', name: 'Enrollment', category: 'business', dependsOn: ['student', 'academic'] },
+        { code: 'assessment', name: 'Assessment', category: 'business', dependsOn: ['academic', 'enrollment'] },
+      ];
+      fakeDb.activate(NORTHFIELD.id, ['student', 'academic']);
+      fakeDb.activate(SUNRISE.id, ['student']);
+      app.get(ModuleRegistryService).invalidateAll();
     });
 
     it('signs in: access token + user in JSON, refresh token in an httpOnly cookie', async () => {
@@ -797,6 +827,99 @@ describe('YESE API (e2e)', () => {
       // 7. Signing out ends the session.
       await http().post('/api/auth/logout').set('X-Tenant', 'northfield').set('Cookie', first.cookie).expect(200);
       await http().get('/api/users').set(adminAuth).expect(401);
+    });
+
+    describe('module registry (Phase 1.5)', () => {
+      async function superAdmin() {
+        const { token } = await signIn('superadmin@yese.local', null);
+        return { Authorization: `Bearer ${token}` };
+      }
+      async function schoolAdmin(school = 'northfield') {
+        const email = school === 'northfield' ? 'admin@northfield.school' : 'admin@sunrise.school';
+        const { token } = await signIn(email, school);
+        return { 'X-Tenant': school, Authorization: `Bearer ${token}` };
+      }
+      const setModule = (auth: Record<string, string>, tenantId: string, code: string, active: boolean) =>
+        http().put(`/api/platform/schools/${tenantId}/modules/${code}`).set(auth).send({ active });
+
+      it('platform routes are for the Super Admin only', async () => {
+        await http().get('/api/platform/schools').expect(401);
+        const admin = await schoolAdmin();
+        const res = await http().get('/api/platform/schools').set(admin).expect(403);
+        expect(res.body.error.code).toBe('SUPER_ADMIN_ONLY');
+      });
+
+      it('the Super Admin sees every school with its modules, and the catalogue', async () => {
+        const sa = await superAdmin();
+        const schools = (await http().get('/api/platform/schools').set(sa).expect(200)).body.data;
+        expect(schools).toEqual([
+          expect.objectContaining({ slug: 'northfield', activeModules: ['academic', 'core', 'student'] }),
+          expect.objectContaining({ slug: 'sunrise', activeModules: ['core', 'student'] }),
+        ]);
+        const modules = (await http().get('/api/platform/modules').set(sa).expect(200)).body.data;
+        expect(modules.find((m: { code: string }) => m.code === 'enrollment').dependsOn).toEqual(['student', 'academic']);
+      });
+
+      it('activation needs every dependency, in order (FR-PL-03)', async () => {
+        const sa = await superAdmin();
+        const refused = await setModule(sa, SUNRISE.id, 'assessment', true).expect(409);
+        expect(refused.body.error).toMatchObject({ code: 'MODULE_DEPENDENCY_INACTIVE', missing: ['academic', 'enrollment'] });
+
+        await setModule(sa, SUNRISE.id, 'academic', true).expect(200);
+        await setModule(sa, SUNRISE.id, 'enrollment', true).expect(200);
+        const done = await setModule(sa, SUNRISE.id, 'assessment', true).expect(200);
+        expect(done.body.data.activeModules).toEqual(['academic', 'assessment', 'core', 'enrollment', 'student']);
+
+        const entry = fakeDb.audit.find((a) => a.action === 'module.activated' && a.detail?.module === 'assessment');
+        expect(entry).toMatchObject({ tenantId: SUNRISE.id, entity: 'module' });
+      });
+
+      it('deactivation is refused while another module needs it; core stays on', async () => {
+        const sa = await superAdmin();
+        await setModule(sa, NORTHFIELD.id, 'enrollment', true).expect(200);
+
+        const needed = await setModule(sa, NORTHFIELD.id, 'academic', false).expect(409);
+        expect(needed.body.error).toMatchObject({ code: 'MODULE_REQUIRED_BY', dependents: ['enrollment'] });
+
+        expect((await setModule(sa, NORTHFIELD.id, 'core', false).expect(400)).body.error.code).toBe('MODULE_CORE');
+        expect((await setModule(sa, NORTHFIELD.id, 'nope', true).expect(404)).body.error.code).toBe('MODULE_NOT_FOUND');
+        await setModule(sa, '99999999-9999-4999-8999-999999999999', 'student', true).expect(404);
+        await http().put(`/api/platform/schools/${NORTHFIELD.id}/modules/student`).set(sa).send({ active: 'yes' }).expect(400);
+      });
+
+      it("an inactive module closes its routes and its permissions stop counting (FR-ID-06)", async () => {
+        const sa = await superAdmin();
+        const admin = await schoolAdmin();
+
+        const closed = await http().get('/api/probe/assessment').set(admin).expect(403);
+        expect(closed.body.error.code).toBe('MODULE_INACTIVE');
+        await http().get('/api/probe/students').set(admin).expect(200);
+
+        await setModule(sa, NORTHFIELD.id, 'student', false).expect(200);
+
+        const denied = await http().get('/api/probe/students').set(admin).expect(403);
+        expect(denied.body.error.code).toBe('PERMISSION_DENIED');
+        const me = (await http().get('/api/auth/me').set(admin).expect(200)).body.data;
+        expect(me.permissions).not.toContain('student.record.view');
+        expect(me.permissions).toContain('core.user.view');
+
+        await setModule(sa, NORTHFIELD.id, 'student', true).expect(200);
+        await http().get('/api/probe/students').set(admin).expect(200);
+      });
+
+      it("GET /api/modules shows the school's own modules", async () => {
+        const admin = await schoolAdmin('sunrise');
+        const modules = (await http().get('/api/modules').set(admin).expect(200)).body.data as {
+          code: string;
+          active: boolean;
+          core: boolean;
+        }[];
+        expect(modules.filter((m) => m.active).map((m) => m.code)).toEqual(['core', 'student']);
+        expect(modules.find((m) => m.code === 'core')?.core).toBe(true);
+
+        const sa = await superAdmin();
+        await http().get('/api/modules').set(sa).expect(400);
+      });
     });
   });
 });
