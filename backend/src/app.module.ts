@@ -11,6 +11,7 @@ import { HealthModule } from './modules/health/health.module';
 import { UsersModule } from './modules/users/users.module';
 import { AuditViewerModule } from './modules/audit/audit-viewer.module';
 import { PlatformModule } from './modules/platform/platform.module';
+import { AcademicModule } from './modules/academic/academic.module';
 
 @Module({
   imports: [
@@ -33,6 +34,9 @@ import { PlatformModule } from './modules/platform/platform.module';
     UsersModule,
     AuditViewerModule,
     PlatformModule,
+
+    // School core (Phase 2)
+    AcademicModule,
   ],
 })
 export class AppModule {}

@@ -6,6 +6,7 @@ export const AUDIT_CATEGORIES = [
   { value: "auth.", label: "Sign-in and sessions" },
   { value: "user.", label: "User accounts" },
   { value: "module.", label: "Modules" },
+  { value: "academic.", label: "Academic structure" },
 ] as const;
 
 const SIGN_IN_FAILURE: Record<string, string> = {
@@ -61,6 +62,36 @@ export function describeAudit(item: AuditItem): string {
       return `Activated the ${detailText(item, "module")} module`;
     case "module.deactivated":
       return `Deactivated the ${detailText(item, "module")} module`;
+    default:
+      return describeAcademic(item) ?? item.action;
+  }
+}
+
+const ACADEMIC_ENTITY: Record<string, string> = {
+  year: "academic year",
+  term: "term",
+  class: "class",
+  section: "section",
+  subject: "subject",
+};
+
+/** "academic.class.created" -> "Created the class Form 1". */
+function describeAcademic(item: AuditItem): string | null {
+  const [area, entity, verb] = item.action.split(".");
+  if (area !== "academic" || !entity || !verb) return null;
+  const name = detailText(item, "name");
+  const what = `the ${ACADEMIC_ENTITY[entity] ?? entity}${name ? ` ${name}` : ""}`;
+  switch (verb) {
+    case "created":
+      return `Created ${what}`;
+    case "updated":
+      return `Changed ${what}`;
+    case "deleted":
+      return `Deleted ${what}`;
+    case "set_current":
+      return `Made ${what} the current year`;
+    case "subjects_updated":
+      return `Changed the subjects and coefficients of ${what}`;
     default:
       return item.action;
   }
