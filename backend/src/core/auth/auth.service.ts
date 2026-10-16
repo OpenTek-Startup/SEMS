@@ -5,6 +5,8 @@ import { hash, verify } from '@node-rs/argon2';
 import type { Prisma } from '../../generated/prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
+import { effectivePermissions } from '../modules/module-rules';
+import { ModuleRegistryService } from '../modules/module-registry.service';
 import { currentTenantId } from '../tenancy/tenant-context';
 import {
   ACTIVITY_WRITE_INTERVAL_SECONDS,
@@ -102,6 +104,7 @@ export class AuthService {
     private readonly jwt: JwtService,
     private readonly audit: AuditService,
     config: ConfigService,
+    private readonly modules: ModuleRegistryService,
   ) {
     this.accessTtlSeconds = parseDurationSeconds(config.get<string>('jwt.expiresIn') ?? '15m');
     this.idleMinutes = config.get<number>('session.idleMinutes') ?? 15;
@@ -302,7 +305,12 @@ export class AuthService {
       select: USER_VIEW_SELECT,
     });
     if (!row) throw unauthorized('SESSION_ENDED', SESSION_ENDED);
-    return toAuthUserView(row);
+    const view = toAuthUserView(row);
+    if (row.tenant) {
+      // Permissions of modules the school has not switched on do not count (FR-ID-06).
+      view.permissions = effectivePermissions(view.permissions, await this.modules.activeModules(row.tenant.id));
+    }
+    return view;
   }
 
   async changePassword(

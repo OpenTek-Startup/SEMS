@@ -78,6 +78,7 @@ model Tenant {
   rolePermissions RolePermission[]
   auditLogs       AuditLog[]
   sessions        Session[]
+  modules         TenantModule[]
 
   @@map("tenants")
 }
@@ -176,10 +177,29 @@ model Module {
   name        String
   category    ModuleCategory
   description String?
+  /// Codes of the modules this one needs (FR-PL-03), e.g. assessment -> {academic, enrollment}.
+  dependsOn   String[]       @default([]) @map("depends_on")
 
   permissions Permission[]
+  tenants     TenantModule[]
 
   @@map("modules")
+}
+
+/// Which modules a school has switched on (Module Registry, FR-PL-03).
+/// Core modules are always on and have no row here.
+model TenantModule {
+  tenantId     String    @map("tenant_id") @db.Uuid
+  moduleCode   String    @map("module_code")
+  active       Boolean   @default(true)
+  changedAt    DateTime  @default(now()) @updatedAt @map("changed_at") @db.Timestamptz(3)
+  changedById  String?   @map("changed_by_id") @db.Uuid
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  module Module @relation(fields: [moduleCode], references: [code], onDelete: Restrict)
+
+  @@id([tenantId, moduleCode])
+  @@map("tenant_modules")
 }
 
 /// Platform-wide permission catalogue: module.resource.action (FR-ID-06).
