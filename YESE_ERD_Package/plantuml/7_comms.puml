@@ -1,0 +1,79 @@
+@startuml comms
+!pragma layout smetana
+!include _theme.puml
+title YESE — Communication & Notifications Domains
+
+package "Communication" {
+  entity "CONVERSATION" as CNV {
+    * conversation_id : UUID <<PK>>
+    --
+    * tenant_id : UUID <<FK>>
+    type : ENUM(direct,group,announcement)
+    subject : VARCHAR
+    created_at : TIMESTAMP
+  }
+  entity "COMMUNICATION_PARTICIPANT" as CP {
+    * participant_id : UUID <<PK>>
+    --
+    * conversation_id : UUID <<FK>>
+    * user_id : UUID <<FK>>
+    role_in_convo : VARCHAR
+  }
+  entity "MESSAGE" as MSG {
+    * message_id : UUID <<PK>>
+    --
+    * conversation_id : UUID <<FK>>
+    * sender_user_id : UUID <<FK>>
+    * body : TEXT
+    sent_at : TIMESTAMP
+    status : VARCHAR
+  }
+  entity "ANNOUNCEMENT" as ANN {
+    * announcement_id : UUID <<PK>>
+    --
+    * tenant_id : UUID <<FK>>
+    * title : VARCHAR
+    body : TEXT
+    audience : VARCHAR
+    published_at : TIMESTAMP
+  }
+  entity "COMMUNICATION_RULE" as CR {
+    * rule_id : UUID <<PK>>
+    --
+    * tenant_id : UUID <<FK>>
+    from_role : VARCHAR
+    to_role : VARCHAR
+    * allowed : BOOLEAN
+  }
+}
+
+package "Notifications" {
+  entity "NOTIFICATION" as NOT {
+    * notification_id : UUID <<PK>>
+    --
+    * tenant_id : UUID <<FK>>
+    * user_id : UUID <<FK>>
+    * type : VARCHAR
+    payload : JSONB
+    read_at : TIMESTAMP
+  }
+  entity "NOTIFICATION_DELIVERY" as ND {
+    * delivery_id : UUID <<PK>>
+    --
+    * notification_id : UUID <<FK>>
+    * channel : ENUM(in_app,email,sms,whatsapp)
+    * status : ENUM(queued,sent,failed)
+    sent_at : TIMESTAMP
+  }
+}
+
+CNV ||--o{ CP
+CNV ||--o{ MSG
+NOT ||--o{ ND
+
+note bottom of CR
+  The communication firewall is enforced by
+  COMMUNICATION_RULE at the backend:
+  e.g. Parent→Student and Student→Admin are blocked.
+end note
+@enduml

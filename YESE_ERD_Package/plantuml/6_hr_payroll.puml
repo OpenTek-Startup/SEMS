@@ -1,0 +1,109 @@
+@startuml hr_payroll
+!pragma layout smetana
+!include _theme.puml
+title YESE — HR & Payroll Domains
+
+package "HR" {
+  entity "LEAVE_TYPE" as LT {
+    * leave_type_id : UUID <<PK>>
+    --
+    * tenant_id : UUID <<FK>>
+    * name : VARCHAR
+    max_days : INT
+  }
+  entity "LEAVE_REQUEST" as LR {
+    * leave_request_id : UUID <<PK>>
+    --
+    * tenant_id : UUID <<FK>>
+    * staff_id : UUID <<FK>>
+    * leave_type_id : UUID <<FK>>
+    start_date : DATE
+    end_date : DATE
+    * status : ENUM(pending,approved,rejected)
+  }
+  entity "APPROVAL" as APP {
+    * approval_id : UUID <<PK>>
+    --
+    * leave_request_id : UUID <<FK>>
+    approver_staff_id : UUID <<FK>>
+    * decision : ENUM(approved,rejected)
+    decided_at : TIMESTAMP
+  }
+  entity "STAFF_ATTENDANCE" as SAT {
+    * staff_attendance_id : UUID <<PK>>
+    --
+    * tenant_id : UUID <<FK>>
+    * staff_id : UUID <<FK>>
+    * date : DATE
+    status : VARCHAR
+  }
+  entity "STAFF_PERFORMANCE" as SPF {
+    * performance_id : UUID <<PK>>
+    --
+    * tenant_id : UUID <<FK>>
+    * staff_id : UUID <<FK>>
+    period : VARCHAR
+    rating : DECIMAL
+  }
+}
+
+package "Payroll" {
+  entity "SALARY_STRUCTURE" as SAL {
+    * salary_structure_id : UUID <<PK>>
+    --
+    * tenant_id : UUID <<FK>>
+    staff_type_id : UUID <<FK>>
+    base_amount : DECIMAL
+  }
+  entity "PAYROLL_RUN" as PR {
+    * payroll_run_id : UUID <<PK>>
+    --
+    * tenant_id : UUID <<FK>>
+    * period : VARCHAR
+    * status : ENUM(draft,processed,paid)
+    run_at : TIMESTAMP
+  }
+  entity "PAYROLL_ITEM" as PI {
+    * payroll_item_id : UUID <<PK>>
+    --
+    * payroll_run_id : UUID <<FK>>
+    * staff_id : UUID <<FK>>
+    gross : DECIMAL
+    net : DECIMAL
+  }
+  entity "DEDUCTION" as DED {
+    * deduction_id : UUID <<PK>>
+    --
+    * payroll_item_id : UUID <<FK>>
+    name : VARCHAR
+    amount : DECIMAL
+  }
+  entity "BONUS" as BON {
+    * bonus_id : UUID <<PK>>
+    --
+    * payroll_item_id : UUID <<FK>>
+    name : VARCHAR
+    amount : DECIMAL
+  }
+  entity "PAYSLIP" as PSL {
+    * payslip_id : UUID <<PK>>
+    --
+    * payroll_item_id : UUID <<FK>>
+    file_url : VARCHAR
+    issued_at : TIMESTAMP
+  }
+}
+
+LT ||--o{ LR
+LR ||--o{ APP
+SAL ||--o{ PI
+PR ||--o{ PI
+PI ||--o{ DED
+PI ||--o{ BON
+PI ||--|| PSL
+
+note bottom of PI
+  HR & Payroll depend on the Staff domain
+  (staff_id references Staff).
+end note
+@enduml
