@@ -28,7 +28,9 @@ export type AuthErrorCode =
   | 'WRONG_CURRENT_PASSWORD'
   | 'WEAK_PASSWORD'
   | 'TOO_MANY_ATTEMPTS'
-  | 'PERMISSION_DENIED';
+  | 'PERMISSION_DENIED'
+  | 'SUPER_ADMIN_ONLY'
+  | 'MODULE_INACTIVE';
 
 export function unauthorized(code: AuthErrorCode, message: string) {
   return new UnauthorizedException({ statusCode: 401, error: 'Unauthorized', code, message });

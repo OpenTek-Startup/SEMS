@@ -7,6 +7,8 @@ import {
 import { hash } from '@node-rs/argon2';
 import type { Prisma } from '../../generated/prisma/client';
 import { AuditService } from '../../core/audit/audit.service';
+import { effectivePermissions } from '../../core/modules/module-rules';
+import { ModuleRegistryService } from '../../core/modules/module-registry.service';
 import { normalizeEmail } from '../../core/auth/auth-rules';
 import type { AuthContext } from '../../core/auth/auth.types';
 import { currentTenantId } from '../../core/tenancy/tenant-context';
@@ -67,6 +69,7 @@ export class UsersService {
   constructor(
     private readonly tdb: TenantPrismaService,
     private readonly audit: AuditService,
+    private readonly modules: ModuleRegistryService,
   ) {}
 
   async list(): Promise<UserListItem[]> {
@@ -76,7 +79,8 @@ export class UsersService {
   }
 
   async roles(): Promise<RoleListItem[]> {
-    this.requireSchool();
+    const tenantId = this.requireSchool();
+    const active = await this.modules.activeModules(tenantId);
     const rows = await this.tdb.db.role.findMany({
       select: {
         id: true,
@@ -94,7 +98,11 @@ export class UsersService {
         description: r.description,
         archetype: r.archetype,
         isSystem: r.isSystem,
-        permissions: r.permissions.map((p) => p.permission.code).sort((a, b) => a.localeCompare(b)),
+        // Only permissions of active modules are shown (and effective).
+        permissions: effectivePermissions(
+          r.permissions.map((p) => p.permission.code),
+          active,
+        ).sort((a, b) => a.localeCompare(b)),
       }))
       .sort((a, b) => a.name.localeCompare(b.name));
   }

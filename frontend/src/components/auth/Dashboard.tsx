@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useAppSelector } from "@/store/hooks";
 import AppHeader from "@/components/layout/AppHeader";
+import { useGetSchoolModulesQuery } from "@/lib/api/modulesApi";
 
 /** Groups "student.record.view" style codes by their module (first segment). */
 function byModule(permissions: string[]): [string, string[]][] {
@@ -21,6 +22,7 @@ function byModule(permissions: string[]): [string, string[]][] {
  */
 export default function Dashboard() {
   const user = useAppSelector((state) => state.auth.user);
+  const modules = useGetSchoolModulesQuery(undefined, { skip: !user?.school });
   if (!user) return null;
 
   return (
@@ -70,6 +72,28 @@ export default function Dashboard() {
             </ul>
           </section>
         </div>
+
+        {user.school && (
+          <section className="mt-4 rounded-xl border border-line bg-white p-5">
+            <h2 className="text-sm font-semibold text-muted">Modules of {user.school.name}</h2>
+            <ul className="mt-3 flex flex-wrap gap-2">
+              {(modules.data ?? []).map((m) => (
+                <li
+                  key={m.code}
+                  title={m.description ?? undefined}
+                  className={`rounded-full px-3 py-1 text-xs font-semibold ${
+                    m.active ? "bg-ok-bg text-ok" : "bg-line/60 text-muted line-through"
+                  }`}
+                >
+                  {m.name}
+                </li>
+              ))}
+            </ul>
+            <p className="mt-2 text-xs text-muted">
+              Modules are switched on by the platform Super Admin. Crossed-out modules are not active for this school.
+            </p>
+          </section>
+        )}
 
         <section className="mt-4 rounded-xl border border-line bg-white p-5">
           <h2 className="text-sm font-semibold text-muted">
