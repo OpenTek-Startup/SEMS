@@ -79,6 +79,12 @@ model Tenant {
   auditLogs       AuditLog[]
   sessions        Session[]
   modules         TenantModule[]
+  academicYears   AcademicYear[]
+  terms           Term[]
+  classes         SchoolClass[]
+  sections        Section[]
+  subjects        Subject[]
+  classSubjects   ClassSubject[]
 
   @@map("tenants")
 }
@@ -244,6 +250,120 @@ model RolePermission {
   @@id([roleId, permissionId])
   @@index([tenantId])
   @@map("role_permissions")
+}
+
+// ------------------------------------------------------------- academic
+// Academic structure (module "academic", Phase 2). Classes, sections and
+// subjects are permanent; what changes each year (enrollment, teacher
+// assignments) refers to an academic year and a section.
+
+/// A school year, e.g. "2026-2027". At most one per school is current.
+model AcademicYear {
+  id        String   @id @default(uuid()) @db.Uuid
+  tenantId  String   @map("tenant_id") @db.Uuid
+  name      String
+  startDate DateTime @map("start_date") @db.Date
+  endDate   DateTime @map("end_date") @db.Date
+  isCurrent Boolean  @default(false) @map("is_current")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  terms  Term[]
+
+  @@unique([tenantId, name])
+  @@index([tenantId])
+  @@map("academic_years")
+}
+
+/// A term (trimester, semester) inside an academic year. Terms never overlap.
+model Term {
+  id             String   @id @default(uuid()) @db.Uuid
+  tenantId       String   @map("tenant_id") @db.Uuid
+  academicYearId String   @map("academic_year_id") @db.Uuid
+  name           String
+  startDate      DateTime @map("start_date") @db.Date
+  endDate        DateTime @map("end_date") @db.Date
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant       Tenant       @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  academicYear AcademicYear @relation(fields: [academicYearId], references: [id], onDelete: Restrict)
+
+  @@unique([academicYearId, name])
+  @@index([tenantId])
+  @@map("terms")
+}
+
+/// A class (grade level), e.g. "Form 1". `level` orders the classes.
+model SchoolClass {
+  id        String   @id @default(uuid()) @db.Uuid
+  tenantId  String   @map("tenant_id") @db.Uuid
+  name      String
+  level     Int
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant   Tenant         @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  sections Section[]
+  subjects ClassSubject[]
+
+  @@unique([tenantId, name])
+  @@index([tenantId])
+  @@map("classes")
+}
+
+/// A section (stream) of a class, e.g. "A" -> "Form 1 A". Students are enrolled into sections.
+model Section {
+  id        String   @id @default(uuid()) @db.Uuid
+  tenantId  String   @map("tenant_id") @db.Uuid
+  classId   String   @map("class_id") @db.Uuid
+  name      String
+  capacity  Int?
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant      Tenant      @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  schoolClass SchoolClass @relation(fields: [classId], references: [id], onDelete: Restrict)
+
+  @@unique([classId, name])
+  @@index([tenantId])
+  @@map("sections")
+}
+
+/// A subject taught in the school, e.g. MATH "Mathematics".
+model Subject {
+  id        String   @id @default(uuid()) @db.Uuid
+  tenantId  String   @map("tenant_id") @db.Uuid
+  code      String
+  name      String
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant  Tenant         @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  classes ClassSubject[]
+
+  @@unique([tenantId, code])
+  @@unique([tenantId, name])
+  @@index([tenantId])
+  @@map("subjects")
+}
+
+/// The subjects of a class with their coefficient (weight in averages).
+model ClassSubject {
+  tenantId    String @map("tenant_id") @db.Uuid
+  classId     String @map("class_id") @db.Uuid
+  subjectId   String @map("subject_id") @db.Uuid
+  coefficient Int
+
+  tenant      Tenant      @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  schoolClass SchoolClass @relation(fields: [classId], references: [id], onDelete: Cascade)
+  subject     Subject     @relation(fields: [subjectId], references: [id], onDelete: Restrict)
+
+  @@id([classId, subjectId])
+  @@index([tenantId])
+  @@index([subjectId])
+  @@map("class_subjects")
 }
 
 // ---------------------------------------------------------------- audit

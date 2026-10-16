@@ -51,6 +51,61 @@ interface FakeUserRole {
   tenantId: string;
 }
 
+/**
+ * A generic table with the flat operations the academic service uses
+ * (no relations, no select: every row field is returned).
+ */
+export class FakeTable {
+  rows: Row[] = [];
+
+  constructor(private readonly withId = true) {}
+
+  private find(where: Row = {}): Row {
+    const row = this.rows.find((r) => matches(r, where));
+    if (!row) throw new Error('Record to update/delete not found');
+    return row;
+  }
+
+  readonly ops = {
+    findMany: async ({ where }: Row = {}) => this.rows.filter((r) => matches(r, where)).map((r) => ({ ...r })),
+    findFirst: async ({ where }: Row = {}) => {
+      const row = this.rows.find((r) => matches(r, where));
+      return row ? { ...row } : null;
+    },
+    count: async ({ where }: Row = {}) => this.rows.filter((r) => matches(r, where)).length,
+    create: async ({ data }: Row) => {
+      const row: Row = this.withId ? { id: randomUUID(), ...data } : { ...data };
+      this.rows.push(row);
+      return { ...row };
+    },
+    createMany: async ({ data }: Row) => {
+      const list = (Array.isArray(data) ? data : [data]) as Row[];
+      for (const d of list) this.rows.push(this.withId ? { id: randomUUID(), ...d } : { ...d });
+      return { count: list.length };
+    },
+    update: async ({ where, data }: Row) => {
+      const row = this.find(where);
+      Object.assign(row, data);
+      return { ...row };
+    },
+    updateMany: async ({ where, data }: Row) => {
+      const hits = this.rows.filter((r) => matches(r, where));
+      for (const r of hits) Object.assign(r, data);
+      return { count: hits.length };
+    },
+    delete: async ({ where }: Row) => {
+      const row = this.find(where);
+      this.rows = this.rows.filter((r) => r !== row);
+      return { ...row };
+    },
+    deleteMany: async ({ where }: Row = {}) => {
+      const before = this.rows.length;
+      this.rows = this.rows.filter((r) => !matches(r, where));
+      return { count: before - this.rows.length };
+    },
+  };
+}
+
 export class FakeAuthDb {
   tenants: FakeTenant[] = [];
   users: Row[] = [];
@@ -62,6 +117,13 @@ export class FakeAuthDb {
   modules: Row[] = [];
   /** Module Registry rows: { tenantId, moduleCode, active } */
   tenantModules: Row[] = [];
+  /** Academic structure (Phase 2) */
+  readonly academicYears = new FakeTable();
+  readonly terms = new FakeTable();
+  readonly classes = new FakeTable();
+  readonly sections = new FakeTable();
+  readonly subjects = new FakeTable();
+  readonly classSubjects = new FakeTable(false);
 
   reset() {
     this.tenants = [];
@@ -72,6 +134,9 @@ export class FakeAuthDb {
     this.audit = [];
     this.modules = [];
     this.tenantModules = [];
+    for (const t of [this.academicYears, this.terms, this.classes, this.sections, this.subjects, this.classSubjects]) {
+      t.rows = [];
+    }
   }
 
   /** Switch modules on for a school (test setup). */
@@ -259,6 +324,12 @@ export class FakeAuthDb {
       userRole: this.userRole,
       session: this.session,
       auditLog: this.auditLog,
+      academicYear: this.academicYears.ops,
+      term: this.terms.ops,
+      schoolClass: this.classes.ops,
+      section: this.sections.ops,
+      subject: this.subjects.ops,
+      classSubject: this.classSubjects.ops,
     };
     const client: Row = {};
     for (const [key, ops] of Object.entries(models)) {
