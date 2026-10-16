@@ -20,6 +20,13 @@ export const TENANT_OWNED_MODELS = new Set<string>([
   'AuditLog',
   'Session',
   'TenantModule',
+  // Academic structure (Phase 2)
+  'AcademicYear',
+  'Term',
+  'SchoolClass',
+  'Section',
+  'Subject',
+  'ClassSubject',
 ]);
 
 const WHERE_OPS = new Set([

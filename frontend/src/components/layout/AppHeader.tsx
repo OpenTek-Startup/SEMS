@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useLogoutMutation } from "@/lib/api/authApi";
 import { can, PERMISSIONS } from "@/lib/auth/permissions";
+import { useActiveModules } from "@/lib/modules/useModules";
 import { useAppSelector } from "@/store/hooks";
 import { secondaryButtonClass } from "@/components/ui/styles";
 
@@ -12,10 +13,13 @@ type NavItem = {
   label: string;
   /** null: any signed-in school user; "superAdmin": the platform Super Admin only */
   permission: string | null | "superAdmin";
+  /** shown only while this module is active for the school */
+  module?: string;
 };
 
 const NAV: NavItem[] = [
   { href: "/dashboard", label: "Dashboard", permission: null },
+  { href: "/academic", label: "Academic", permission: PERMISSIONS.academicView, module: "academic" },
   { href: "/users", label: "Users", permission: PERMISSIONS.userView },
   { href: "/audit", label: "Audit log", permission: PERMISSIONS.auditView },
   { href: "/platform", label: "Schools & modules", permission: "superAdmin" },
@@ -23,16 +27,19 @@ const NAV: NavItem[] = [
 
 /**
  * Top bar shared by the signed-in pages. Menu entries the user has no
- * permission for are hidden (the backend refuses them anyway).
+ * permission for, or whose module is off, are hidden (the backend refuses
+ * them anyway).
  */
 export default function AppHeader() {
   const pathname = usePathname();
   const user = useAppSelector((state) => state.auth.user);
   const [logout, { isLoading }] = useLogoutMutation();
+  const activeModules = useActiveModules().codes;
   if (!user) return null;
 
   const roleNames = user.roles.map((r) => r.name).join(", ") || "No role yet";
   const links = NAV.filter((item) => {
+    if (item.module && !activeModules.has(item.module)) return false;
     if (item.permission === null) return true;
     if (item.permission === "superAdmin") return user.isSuperAdmin;
     return can(user, item.permission);
