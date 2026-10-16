@@ -1,0 +1,114 @@
+@startuml academic
+!pragma layout smetana
+!include _theme.puml
+title YESE — Academic Structure & Enrollment Domains
+
+entity "ACADEMIC_YEAR" as AY {
+  * year_id : UUID <<PK>>
+  --
+  * tenant_id : UUID <<FK>>
+  * name : VARCHAR
+  start_date : DATE
+  end_date : DATE
+  is_current : BOOLEAN
+}
+entity "TERM" as TRM {
+  * term_id : UUID <<PK>>
+  --
+  * year_id : UUID <<FK>>
+  * name : VARCHAR
+  index : INT
+}
+entity "DEPARTMENT" as DEP {
+  * department_id : UUID <<PK>>
+  --
+  * tenant_id : UUID <<FK>>
+  * name : VARCHAR
+  code : VARCHAR
+}
+entity "PROGRAM" as PRG {
+  * program_id : UUID <<PK>>
+  --
+  * tenant_id : UUID <<FK>>
+  department_id : UUID <<FK>>
+  * name : VARCHAR
+  level : VARCHAR
+}
+entity "CLASS" as CLS {
+  * class_id : UUID <<PK>>
+  --
+  * tenant_id : UUID <<FK>>
+  program_id : UUID <<FK>>
+  * name : VARCHAR
+  level : VARCHAR
+}
+entity "SECTION" as SEC {
+  * section_id : UUID <<PK>>
+  --
+  * class_id : UUID <<FK>>
+  * name : VARCHAR
+  capacity : INT
+}
+entity "SUBJECT" as SUB {
+  * subject_id : UUID <<PK>>
+  --
+  * tenant_id : UUID <<FK>>
+  * name : VARCHAR
+  code : VARCHAR
+}
+entity "COURSE" as CRS {
+  * course_id : UUID <<PK>>
+  --
+  * tenant_id : UUID <<FK>>
+  program_id : UUID <<FK>>
+  subject_id : UUID <<FK>>
+  * code : VARCHAR
+  credit_units : INT
+}
+entity "CURRICULUM" as CUR {
+  * curriculum_id : UUID <<PK>>
+  --
+  * program_id : UUID <<FK>>
+  * year_id : UUID <<FK>>
+  version : VARCHAR
+}
+entity "TEACHER_ASSIGNMENT" as TA {
+  * assignment_id : UUID <<PK>>
+  --
+  * tenant_id : UUID <<FK>>
+  * staff_id : UUID <<FK>>
+  * subject_id : UUID <<FK>>
+  * section_id : UUID <<FK>>
+  * year_id : UUID <<FK>>
+}
+entity "ENROLLMENT" as ENR {
+  * enrollment_id : UUID <<PK>>
+  --
+  * tenant_id : UUID <<FK>>
+  * student_id : UUID <<FK>>
+  * section_id : UUID <<FK>>
+  * year_id : UUID <<FK>>
+  * status : ENUM(active,withdrawn,completed)
+  enrolled_at : DATE
+}
+
+AY ||--o{ TRM
+AY ||--o{ CUR
+DEP ||--o{ PRG
+PRG ||--o{ CLS
+CLS ||--o{ SEC
+PRG ||--o{ CRS
+SUB ||--o{ CRS
+PRG ||--o{ CUR
+SUB ||--o{ TA
+SEC ||--o{ TA
+AY ||--o{ TA
+SEC ||--o{ ENR
+AY ||--o{ ENR
+
+note bottom of ENR
+  Enrollment links a Student (Student domain)
+  to a Section for an Academic Year.
+  Teacher_Assignment links Staff to Subject×Section.
+end note
+@enduml
