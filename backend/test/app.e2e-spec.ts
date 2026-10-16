@@ -921,5 +921,218 @@ describe('YESE API (e2e)', () => {
         await http().get('/api/modules').set(sa).expect(400);
       });
     });
+
+    describe('academic structure (Phase 2)', () => {
+      const ACADEMIC = ['academic.structure.manage', 'academic.structure.view'];
+      const OTHER_ID = '99999999-9999-4999-8999-999999999999';
+
+      async function as(email: string, school = 'northfield') {
+        const { token } = await signIn(email, school);
+        return { 'X-Tenant': school, Authorization: `Bearer ${token}` };
+      }
+      const admin = () => as('admin@northfield.school');
+      const post = (auth: Record<string, string>, url: string, body: object) =>
+        http().post(`/api/academic${url}`).set(auth).send(body);
+      const patch = (auth: Record<string, string>, url: string, body: object) =>
+        http().patch(`/api/academic${url}`).set(auth).send(body);
+      const del = (auth: Record<string, string>, url: string) => http().delete(`/api/academic${url}`).set(auth);
+      const get = (auth: Record<string, string>, url: string) => http().get(`/api/academic${url}`).set(auth);
+
+      beforeEach(() => {
+        // Northfield's administrator manages the structure; the teacher may only read it.
+        for (const role of fakeDb.roles) {
+          if (role.archetype === 'admin') role.permissions = [...ADMIN_PERMISSIONS, ...ACADEMIC];
+          if (role.id === ROLE_TEACHER) role.permissions = [...role.permissions, 'academic.structure.view'];
+        }
+      });
+
+      it('needs the Academic module and the academic permissions', async () => {
+        await http().get('/api/academic/years').set('X-Tenant', 'northfield').expect(401);
+
+        const sunrise = await as('admin@sunrise.school', 'sunrise');
+        expect((await get(sunrise, '/years').expect(403)).body.error.code).toBe('MODULE_INACTIVE');
+
+        const teacher = await as('teacher@northfield.school');
+        await get(teacher, '/years').expect(200);
+        await get(teacher, '/classes').expect(200);
+        const denied = await post(teacher, '/classes', { name: 'Form 1', level: 1 }).expect(403);
+        expect(denied.body.error.code).toBe('PERMISSION_DENIED');
+
+        const me = (await http().get('/api/auth/me').set(teacher).expect(200)).body.data;
+        expect(me.permissions).toContain('academic.structure.view');
+      });
+
+      it('academic years: the first becomes current, names and dates are checked, one current year', async () => {
+        const auth = await admin();
+        const first = await post(auth, '/years', { name: '2026-2027', startDate: '2026-09-07', endDate: '2027-06-30' }).expect(201);
+        expect(first.body.data).toMatchObject({ name: '2026-2027', isCurrent: true, startDate: '2026-09-07', terms: [] });
+
+        const older = await post(auth, '/years', { name: '2025-2026', startDate: '2025-09-08', endDate: '2026-06-30' }).expect(201);
+        expect(older.body.data.isCurrent).toBe(false);
+
+        const taken = await post(auth, '/years', { name: ' 2026-2027 ', startDate: '2027-09-06', endDate: '2028-06-30' }).expect(409);
+        expect(taken.body.error.code).toBe('NAME_TAKEN');
+        const overlap = await post(auth, '/years', { name: 'Calendar 2026', startDate: '2026-01-01', endDate: '2026-12-31' }).expect(409);
+        expect(overlap.body.error.code).toBe('YEARS_OVERLAP');
+
+        const backwards = await post(auth, '/years', { name: 'X', startDate: '2028-06-30', endDate: '2027-09-06' }).expect(400);
+        expect(backwards.body.error.code).toBe('DATES_INVALID');
+        const impossible = await post(auth, '/years', { name: 'X', startDate: '2027-02-30', endDate: '2027-06-30' }).expect(400);
+        expect(impossible.body.error.code).toBe('DATE_INVALID');
+        const tooLong = await post(auth, '/years', { name: 'X', startDate: '2027-09-06', endDate: '2029-06-30' }).expect(400);
+        expect(tooLong.body.error.code).toBe('YEAR_TOO_LONG');
+        await post(auth, '/years', { name: 'X', startDate: '06/09/2027', endDate: '2028-06-30' }).expect(400);
+
+        await http().post(`/api/academic/years/${older.body.data.id}/current`).set(auth).expect(200);
+        const years = (await get(auth, '/years').expect(200)).body.data as { name: string; isCurrent: boolean }[];
+        expect(years.map((y) => [y.name, y.isCurrent])).toEqual([
+          ['2026-2027', false],
+          ['2025-2026', true],
+        ]);
+        expect((await get(auth, '/current').expect(200)).body.data.year).toMatchObject({ name: '2025-2026' });
+
+        const current = await del(auth, `/years/${older.body.data.id}`).expect(409);
+        expect(current.body.error.code).toBe('YEAR_IS_CURRENT');
+        await del(auth, `/years/${first.body.data.id}`).expect(200);
+        expect((await get(auth, '/years')).body.data).toHaveLength(1);
+      });
+
+      it('terms stay inside their year and never overlap', async () => {
+        const auth = await admin();
+        const current = (await post(auth, '/years', { name: '2026-2027', startDate: '2026-09-07', endDate: '2027-06-30' })).body.data;
+        const next = (await post(auth, '/years', { name: '2027-2028', startDate: '2027-09-06', endDate: '2028-06-30' })).body.data;
+
+        await post(auth, `/years/${current.id}/terms`, { name: 'Second Term', startDate: '2027-01-04', endDate: '2027-03-26' }).expect(201);
+        const year = (await post(auth, `/years/${current.id}/terms`, { name: 'First Term', startDate: '2026-09-07', endDate: '2026-12-11' }).expect(201)).body.data;
+        expect(year.terms.map((t: { name: string }) => t.name)).toEqual(['First Term', 'Second Term']);
+
+        const overlap = await post(auth, `/years/${current.id}/terms`, { name: 'Mock exams', startDate: '2026-12-11', endDate: '2026-12-18' }).expect(409);
+        expect(overlap.body.error).toMatchObject({ code: 'TERMS_OVERLAP', with: 'First Term' });
+        const outside = await post(auth, `/years/${current.id}/terms`, { name: 'Summer', startDate: '2027-07-01', endDate: '2027-08-15' }).expect(400);
+        expect(outside.body.error.code).toBe('TERM_OUTSIDE_YEAR');
+        const sameName = await post(auth, `/years/${current.id}/terms`, { name: 'first term', startDate: '2027-04-12', endDate: '2027-06-30' }).expect(409);
+        expect(sameName.body.error.code).toBe('NAME_TAKEN');
+
+        const shrink = await patch(auth, `/years/${current.id}`, { endDate: '2027-02-28' }).expect(409);
+        expect(shrink.body.error).toMatchObject({ code: 'YEAR_TERMS_OUTSIDE', terms: ['Second Term'] });
+
+        const third = await post(auth, `/years/${next.id}/terms`, { name: 'First Term', startDate: '2027-09-06', endDate: '2027-12-10' }).expect(201);
+        expect((await del(auth, `/years/${next.id}`).expect(409)).body.error.code).toBe('YEAR_NOT_EMPTY');
+        const termId = third.body.data.terms[0].id;
+        const renamed = await patch(auth, `/terms/${termId}`, { name: 'Term 1' }).expect(200);
+        expect(renamed.body.data.terms[0]).toMatchObject({ name: 'Term 1', startDate: '2027-09-06' });
+        await del(auth, `/terms/${termId}`).expect(200);
+        await del(auth, `/years/${next.id}`).expect(200);
+        await patch(auth, `/terms/${OTHER_ID}`, { name: 'Ghost' }).expect(404);
+      });
+
+      it('classes, sections and subjects with coefficients', async () => {
+        const auth = await admin();
+        const math = (await post(auth, '/subjects', { code: ' math ', name: 'Mathematics' }).expect(201)).body.data;
+        expect(math).toMatchObject({ code: 'MATH', name: 'Mathematics', classCount: 0 });
+        const eng = (await post(auth, '/subjects', { code: 'ENG', name: 'English Language' }).expect(201)).body.data;
+        expect((await post(auth, '/subjects', { code: 'Math', name: 'Maths' }).expect(409)).body.error.code).toBe('CODE_TAKEN');
+        await post(auth, '/subjects', { code: 'MATHS AND MORE', name: 'X' }).expect(400);
+
+        const form1 = (await post(auth, '/classes', { name: 'Form 1', level: 1 }).expect(201)).body.data;
+        await post(auth, '/classes', { name: 'Form 2', level: 2 }).expect(201);
+        expect((await post(auth, '/classes', { name: 'form  1', level: 3 }).expect(409)).body.error.code).toBe('NAME_TAKEN');
+
+        await post(auth, `/classes/${form1.id}/sections`, { name: 'B' }).expect(201);
+        const withA = (await post(auth, `/classes/${form1.id}/sections`, { name: 'A', capacity: 45 }).expect(201)).body.data;
+        expect(withA.sections.map((s: { label: string }) => s.label)).toEqual(['Form 1 A', 'Form 1 B']);
+        expect((await post(auth, `/classes/${form1.id}/sections`, { name: 'a' }).expect(409)).body.error.code).toBe('NAME_TAKEN');
+
+        const put = (subjects: object[]) => http().put(`/api/academic/classes/${form1.id}/subjects`).set(auth).send({ subjects });
+        const set = await put([
+          { subjectId: math.id, coefficient: 4 },
+          { subjectId: eng.id, coefficient: 3 },
+        ]).expect(200);
+        expect(set.body.data.subjects.map((s: { code: string }) => s.code)).toEqual(['ENG', 'MATH']);
+        expect(set.body.data.totalCoefficient).toBe(7);
+        expect((await put([{ subjectId: math.id, coefficient: 4 }, { subjectId: math.id, coefficient: 2 }]).expect(400)).body.error.code).toBe(
+          'DUPLICATE_SUBJECT',
+        );
+        expect((await put([{ subjectId: OTHER_ID, coefficient: 2 }]).expect(400)).body.error.code).toBe('UNKNOWN_SUBJECT');
+        await put([{ subjectId: math.id, coefficient: 0 }]).expect(400);
+
+        const classes = (await get(auth, '/classes').expect(200)).body.data;
+        expect(classes.map((c: { name: string }) => c.name)).toEqual(['Form 1', 'Form 2']);
+        expect(classes[0].sections[0]).toMatchObject({ name: 'A', capacity: 45 });
+        const sections = (await get(auth, '/sections').expect(200)).body.data;
+        expect(sections.map((s: { label: string }) => s.label)).toEqual(['Form 1 A', 'Form 1 B']);
+        const subjects = (await get(auth, '/subjects').expect(200)).body.data;
+        expect(subjects.map((s: { code: string; classCount: number }) => [s.code, s.classCount])).toEqual([
+          ['ENG', 1],
+          ['MATH', 1],
+        ]);
+
+        const inUse = await del(auth, `/subjects/${math.id}`).expect(409);
+        expect(inUse.body.error).toMatchObject({ code: 'SUBJECT_IN_USE', classes: ['Form 1'] });
+        expect((await del(auth, `/classes/${form1.id}`).expect(409)).body.error.code).toBe('CLASS_NOT_EMPTY');
+        for (const s of withA.sections) await del(auth, `/sections/${s.id}`).expect(200);
+        await del(auth, `/classes/${form1.id}`).expect(200);
+        await del(auth, `/subjects/${math.id}`).expect(200);
+
+        const renamed = await patch(auth, `/subjects/${eng.id}`, { name: 'English' }).expect(200);
+        expect(renamed.body.data).toMatchObject({ code: 'ENG', name: 'English', classCount: 0 });
+      });
+
+      it("a school never sees or changes another school's structure", async () => {
+        fakeDb.activate(SUNRISE.id, ['academic']);
+        app.get(ModuleRegistryService).invalidateAll();
+        const north = await admin();
+        const sunrise = await as('admin@sunrise.school', 'sunrise');
+
+        const form1 = (await post(north, '/classes', { name: 'Form 1', level: 1 }).expect(201)).body.data;
+        expect((await get(sunrise, '/classes').expect(200)).body.data).toEqual([]);
+        const foreign = await patch(sunrise, `/classes/${form1.id}`, { name: 'Taken over' }).expect(404);
+        expect(foreign.body.error.code).toBe('CLASS_NOT_FOUND');
+        await post(sunrise, `/classes/${form1.id}/sections`, { name: 'A' }).expect(404);
+        await del(sunrise, `/classes/${form1.id}`).expect(404);
+
+        // Names are unique per school only.
+        await post(sunrise, '/classes', { name: 'Form 1', level: 1 }).expect(201);
+        expect(fakeDb.classes.rows.map((c) => c.tenantId).sort()).toEqual([NORTHFIELD.id, SUNRISE.id].sort());
+      });
+
+      it('every change is written to the audit log of the school', async () => {
+        const auth = await admin();
+        const year = (await post(auth, '/years', { name: '2026-2027', startDate: '2026-09-07', endDate: '2027-06-30' })).body.data;
+        await post(auth, `/years/${year.id}/terms`, { name: 'First Term', startDate: '2026-09-07', endDate: '2026-12-11' });
+        const math = (await post(auth, '/subjects', { code: 'MATH', name: 'Mathematics' })).body.data;
+        const form1 = (await post(auth, '/classes', { name: 'Form 1', level: 1 })).body.data;
+        await post(auth, `/classes/${form1.id}/sections`, { name: 'A' });
+        await http()
+          .put(`/api/academic/classes/${form1.id}/subjects`)
+          .set(auth)
+          .send({ subjects: [{ subjectId: math.id, coefficient: 4 }] })
+          .expect(200);
+
+        const academic = fakeDb.audit.filter((a) => a.action.startsWith('academic.'));
+        expect(academic.map((a) => a.action)).toEqual([
+          'academic.year.created',
+          'academic.term.created',
+          'academic.subject.created',
+          'academic.class.created',
+          'academic.section.created',
+          'academic.class.subjects_updated',
+        ]);
+        expect(academic.every((a) => a.tenantId === NORTHFIELD.id)).toBe(true);
+        expect(academic.find((a) => a.action === 'academic.section.created')?.detail).toEqual({ name: 'Form 1 A' });
+
+        const page = (await http().get('/api/audit?action=academic.').set(auth).expect(200)).body.data;
+        expect(page.items).toHaveLength(6);
+      });
+
+      it('validates ids and bodies', async () => {
+        const auth = await admin();
+        await patch(auth, '/classes/not-an-id', { name: 'X' }).expect(400);
+        await post(auth, '/classes', { name: 'Form 1', level: 0 }).expect(400);
+        await post(auth, '/classes', { name: 'Form 1', level: 1, tenantId: SUNRISE.id }).expect(400);
+        await post(auth, '/classes', { name: '   ', level: 1 }).expect(400);
+        await post(auth, '/years', { name: '2026-2027' }).expect(400);
+      });
+    });
   });
 });
