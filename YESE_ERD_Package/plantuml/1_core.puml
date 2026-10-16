@@ -1,0 +1,122 @@
+@startuml core
+!pragma layout smetana
+!include _theme.puml
+title YESE — Core Platform Domain (Tenancy · Identity · RBAC · Modules · Audit)
+
+entity "TENANT" as TEN {
+  * tenant_id : UUID <<PK>>
+  --
+  * name : VARCHAR
+  * type : ENUM(primary,secondary,university)
+  * status : ENUM(active,suspended,inactive)
+  subdomain : VARCHAR <<UQ>>
+  config : JSONB
+  created_at : TIMESTAMP
+}
+entity "USER" as USR {
+  * user_id : UUID <<PK>>
+  --
+  * tenant_id : UUID <<FK>>
+  * email : VARCHAR <<UQ>>
+  username : VARCHAR
+  * password_hash : VARCHAR
+  * status : ENUM(active,disabled)
+  language : VARCHAR
+}
+entity "IDENTITY" as IDN {
+  * identity_id : UUID <<PK>>
+  --
+  * user_id : UUID <<FK>>
+  provider : VARCHAR
+  provider_uid : VARCHAR
+  mfa_enabled : BOOLEAN
+}
+entity "ROLE" as ROL {
+  * role_id : UUID <<PK>>
+  --
+  tenant_id : UUID <<FK>>
+  * name : VARCHAR
+  * is_system : BOOLEAN
+  archetype : ENUM(admin,staff,parent,student)
+}
+entity "PERMISSION" as PRM {
+  * permission_id : UUID <<PK>>
+  --
+  * code : VARCHAR <<UQ>>
+  * module_code : VARCHAR
+  resource : VARCHAR
+  action : VARCHAR
+}
+entity "USER_ROLE" as UR {
+  * user_id : UUID <<FK>>
+  * role_id : UUID <<FK>>
+}
+entity "ROLE_PERMISSION" as RP {
+  * role_id : UUID <<FK>>
+  * permission_id : UUID <<FK>>
+}
+entity "MODULE" as MOD {
+  * module_id : UUID <<PK>>
+  --
+  * code : VARCHAR <<UQ>>
+  * name : VARCHAR
+  category : ENUM(core,business,extension)
+}
+entity "MODULE_VERSION" as MV {
+  * module_version_id : UUID <<PK>>
+  --
+  * module_id : UUID <<FK>>
+  * version : VARCHAR
+  released_at : TIMESTAMP
+}
+entity "MODULE_DEPENDENCY" as MD {
+  * module_id : UUID <<FK>>
+  * depends_on_module_id : UUID <<FK>>
+}
+entity "TENANT_MODULE" as TM {
+  * tenant_module_id : UUID <<PK>>
+  --
+  * tenant_id : UUID <<FK>>
+  * module_id : UUID <<FK>>
+  * is_active : BOOLEAN
+  activated_at : TIMESTAMP
+}
+entity "MODULE_CONFIGURATION" as MC {
+  * config_id : UUID <<PK>>
+  --
+  * tenant_module_id : UUID <<FK>>
+  key : VARCHAR
+  value : JSONB
+}
+entity "AUDIT_LOG" as AUD {
+  * audit_id : UUID <<PK>>
+  --
+  * tenant_id : UUID <<FK>>
+  user_id : UUID <<FK>>
+  * action : VARCHAR
+  entity : VARCHAR
+  entity_id : UUID
+  * timestamp : TIMESTAMP
+  detail : JSONB
+}
+
+TEN ||--o{ USR
+USR ||--o{ IDN
+TEN ||--o{ ROL
+USR ||--o{ UR
+ROL ||--o{ UR
+ROL ||--o{ RP
+PRM ||--o{ RP
+MOD ||--o{ MV
+MOD ||--o{ MD
+MOD ||--o{ TM
+TEN ||--o{ TM
+TM ||--o{ MC
+TEN ||--o{ AUD
+USR ||--o{ AUD
+
+note bottom of TEN
+  Every tenant-owned table carries tenant_id.
+  Isolation is enforced at the data-access layer.
+end note
+@enduml

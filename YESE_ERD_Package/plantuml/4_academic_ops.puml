@@ -1,0 +1,127 @@
+@startuml academic_ops
+!pragma layout smetana
+!include _theme.puml
+title YESE — Academic Operations (Attendance · Assessment · Results)
+
+package "Attendance" {
+  entity "ATTENDANCE_SESSION" as ASE {
+    * session_id : UUID <<PK>>
+    --
+    * tenant_id : UUID <<FK>>
+    * section_id : UUID <<FK>>
+    subject_id : UUID <<FK>>
+    staff_id : UUID <<FK>>
+    * date : DATE
+    period : VARCHAR
+  }
+  entity "ATTENDANCE_RECORD" as ARE {
+    * record_id : UUID <<PK>>
+    --
+    * session_id : UUID <<FK>>
+    * student_id : UUID <<FK>>
+    * status_id : UUID <<FK>>
+    justification : VARCHAR
+  }
+  entity "ATTENDANCE_STATUS" as AST {
+    * status_id : UUID <<PK>>
+    --
+    * tenant_id : UUID <<FK>>
+    * name : VARCHAR(present,absent,late,excused)
+  }
+}
+
+package "Assessment" {
+  entity "ASSESSMENT" as ASM {
+    * assessment_id : UUID <<PK>>
+    --
+    * tenant_id : UUID <<FK>>
+    * subject_id : UUID <<FK>>
+    * section_id : UUID <<FK>>
+    * term_id : UUID <<FK>>
+    type : VARCHAR
+    max_score : DECIMAL
+  }
+  entity "ASSESSMENT_COMPONENT" as ACO {
+    * component_id : UUID <<PK>>
+    --
+    * assessment_id : UUID <<FK>>
+    name : VARCHAR
+    weight : DECIMAL
+  }
+  entity "ASSESSMENT_ATTEMPT" as AAT {
+    * attempt_id : UUID <<PK>>
+    --
+    * assessment_id : UUID <<FK>>
+    * student_id : UUID <<FK>>
+    attempt_no : INT
+  }
+  entity "SCORE" as SCO {
+    * score_id : UUID <<PK>>
+    --
+    * attempt_id : UUID <<FK>>
+    component_id : UUID <<FK>>
+    * value : DECIMAL
+  }
+  entity "GRADE_ENTRY" as GRE {
+    * grade_id : UUID <<PK>>
+    --
+    * tenant_id : UUID <<FK>>
+    * student_id : UUID <<FK>>
+    * subject_id : UUID <<FK>>
+    * term_id : UUID <<FK>>
+    grade : VARCHAR
+    status : ENUM(entered,validated,locked)
+  }
+}
+
+package "Results" {
+  entity "RESULT" as RES {
+    * result_id : UUID <<PK>>
+    --
+    * tenant_id : UUID <<FK>>
+    * student_id : UUID <<FK>>
+    * term_id : UUID <<FK>>
+    average : DECIMAL
+    gpa : DECIMAL
+    grade : VARCHAR
+  }
+  entity "RESULT_SUMMARY" as RSU {
+    * summary_id : UUID <<PK>>
+    --
+    * result_id : UUID <<FK>>
+    position : INT
+    total : DECIMAL
+    remark : VARCHAR
+  }
+  entity "REPORT_CARD" as RC {
+    * report_card_id : UUID <<PK>>
+    --
+    * student_id : UUID <<FK>>
+    * term_id : UUID <<FK>>
+    file_url : VARCHAR
+    published_at : TIMESTAMP
+  }
+  entity "TRANSCRIPT" as TRN {
+    * transcript_id : UUID <<PK>>
+    --
+    * student_id : UUID <<FK>>
+    cgpa : DECIMAL
+    file_url : VARCHAR
+  }
+}
+
+ASE ||--o{ ARE
+AST ||--o{ ARE
+ASM ||--o{ ACO
+ASM ||--o{ AAT
+AAT ||--o{ SCO
+RES ||--|| RSU
+RES ||--o{ RC
+
+note bottom of GRE
+  Grade lifecycle: entered → validated → locked
+  (changes after lock are audited).
+  Results feed Report Cards (school) and
+  Transcripts (university).
+end note
+@enduml

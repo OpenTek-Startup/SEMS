@@ -1,0 +1,50 @@
+@startuml overview
+!pragma layout smetana
+!include _theme.puml
+title YESE — Domain Map & Cross-Domain Relationships
+
+skinparam rectangle {
+  BackgroundColor #0F52A8
+  FontColor #FFFFFF
+  BorderColor #0F52A8
+  FontStyle bold
+  roundCorner 12
+}
+
+rectangle "CORE PLATFORM\n(Tenant, User, RBAC,\nModule Registry, Audit)" as CORE #0F52A8
+rectangle "STUDENT" as STU #1879E2
+rectangle "STAFF" as STF #1879E2
+rectangle "ACADEMIC\n(Years, Programs,\nClasses, Subjects)" as ACA #1879E2
+rectangle "ENROLLMENT" as ENR #1879E2
+rectangle "ATTENDANCE" as ATT #4FA0F5
+rectangle "ASSESSMENT" as ASM #4FA0F5
+rectangle "RESULTS" as RES #4FA0F5
+rectangle "FINANCE" as FIN #2E9E6B
+rectangle "HR" as HR #C6922E
+rectangle "PAYROLL" as PAY #C6922E
+rectangle "COMMUNICATION\n& NOTIFICATIONS" as COM #7A5AA6
+
+CORE --> STU : owns / tenant + user
+CORE --> STF : owns / tenant + user
+CORE --> ACA : tenant
+STU --> ENR
+ACA --> ENR
+ENR --> ATT
+ENR --> ASM
+ASM --> RES
+ATT ..> RES
+STU --> FIN : billed
+ENR --> FIN
+STF --> HR
+HR --> PAY
+CORE --> COM
+STF --> COM
+STU --> COM
+
+note bottom of CORE
+  Every module depends on CORE for tenancy,
+  identity, RBAC and module activation.
+  Arrows show dependency / data reference,
+  not table-level foreign keys.
+end note
+@enduml
