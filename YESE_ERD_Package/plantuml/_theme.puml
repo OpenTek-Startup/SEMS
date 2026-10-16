@@ -1,0 +1,18 @@
+skinparam backgroundColor #FFFFFF
+skinparam shadowing false
+skinparam defaultFontName "DejaVu Sans"
+skinparam defaultFontSize 12
+skinparam linetype ortho
+skinparam ArrowColor #0F52A8
+skinparam ArrowThickness 1.1
+skinparam TitleFontSize 19
+skinparam TitleFontColor #0F52A8
+skinparam TitleFontStyle bold
+skinparam NoteBackgroundColor #FDF3E3
+skinparam NoteBorderColor #C6922E
+skinparam entity {
+  BackgroundColor #EAF2FD
+  BorderColor #1879E2
+  FontColor #0F2A4A
+  FontStyle bold
+}

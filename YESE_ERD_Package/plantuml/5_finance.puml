@@ -1,0 +1,95 @@
+@startuml finance
+!pragma layout smetana
+!include _theme.puml
+title YESE — Finance Domain
+
+entity "FEE_STRUCTURE" as FS {
+  * fee_structure_id : UUID <<PK>>
+  --
+  * tenant_id : UUID <<FK>>
+  program_id : UUID <<FK>>
+  year_id : UUID <<FK>>
+  * name : VARCHAR
+}
+entity "FEE_ITEM" as FI {
+  * fee_item_id : UUID <<PK>>
+  --
+  * fee_structure_id : UUID <<FK>>
+  * name : VARCHAR
+  * amount : DECIMAL
+  mandatory : BOOLEAN
+}
+entity "INVOICE" as INV {
+  * invoice_id : UUID <<PK>>
+  --
+  * tenant_id : UUID <<FK>>
+  * student_id : UUID <<FK>>
+  * total : DECIMAL
+  * status : ENUM(unpaid,partial,paid,void)
+  issued_at : TIMESTAMP
+}
+entity "INVOICE_ITEM" as II {
+  * invoice_item_id : UUID <<PK>>
+  --
+  * invoice_id : UUID <<FK>>
+  fee_item_id : UUID <<FK>>
+  * amount : DECIMAL
+}
+entity "PAYMENT" as PAY {
+  * payment_id : UUID <<PK>>
+  --
+  * tenant_id : UUID <<FK>>
+  * invoice_id : UUID <<FK>>
+  * student_id : UUID <<FK>>
+  * amount : DECIMAL
+  * channel : ENUM(mtn_momo,orange_money,cash,bank)
+  reference : VARCHAR
+  * status : ENUM(initiated,confirmed,failed)
+}
+entity "RECEIPT" as RCT {
+  * receipt_id : UUID <<PK>>
+  --
+  * payment_id : UUID <<FK>>
+  * number : VARCHAR <<UQ>>
+  issued_at : TIMESTAMP
+}
+entity "FINANCIAL_TRANSACTION" as FT {
+  * transaction_id : UUID <<PK>>
+  --
+  * tenant_id : UUID <<FK>>
+  * type : ENUM(charge,payment,void,reversal,discount)
+  * amount : DECIMAL
+  reference_id : UUID
+  * status : VARCHAR
+  * created_at : TIMESTAMP
+}
+entity "DISCOUNT" as DIS {
+  * discount_id : UUID <<PK>>
+  --
+  * tenant_id : UUID <<FK>>
+  * name : VARCHAR
+  percent : DECIMAL
+  amount : DECIMAL
+}
+entity "SCHOLARSHIP" as SCH {
+  * scholarship_id : UUID <<PK>>
+  --
+  * tenant_id : UUID <<FK>>
+  student_id : UUID <<FK>>
+  * name : VARCHAR
+  coverage : DECIMAL
+}
+
+FS ||--o{ FI
+INV ||--o{ II
+FI ||--o{ II
+INV ||--o{ PAY
+PAY ||--|| RCT
+DIS ||--o{ II
+
+note bottom of FT
+  Financial records are never deleted:
+  use void / reversal / cancellation + audit
+  (immutable ledger).
+end note
+@enduml
