@@ -7,6 +7,7 @@
  *  - two demo schools (Northfield, Sunrise) from SRS v1.2 §3.3
  *  - the four base roles per school, plus an "Exam Officer" custom role at Northfield
  *  - one administrator account per school
+ *  - a demo academic structure for Northfield (year, terms, classes, sections, subjects)
  *
  * Passwords: set SEED_DEFAULT_PASSWORD in .env to choose one. Otherwise a random
  * password is generated and printed ONCE at the end. Every seeded account must
@@ -69,6 +70,7 @@ const PERMISSIONS: Record<string, string> = {
   'student.guardian.manage': 'Manage guardians',
   'staff.record.view': 'View staff records',
   'staff.record.edit': 'Create and edit staff',
+  'academic.structure.view': 'View years, terms, classes and subjects',
   'academic.structure.manage': 'Manage years, classes and subjects',
   'academic.teacher.assign': 'Assign teachers to subjects and sections',
   'enrollment.enroll': 'Enroll students',
@@ -92,6 +94,7 @@ const PERMISSIONS: Record<string, string> = {
 
 const TEACHER_PERMISSIONS = [
   'student.record.view',
+  'academic.structure.view',
   'attendance.register.take',
   'attendance.report.view',
   'assessment.create',
@@ -100,6 +103,7 @@ const TEACHER_PERMISSIONS = [
 
 const EXAM_OFFICER_PERMISSIONS = [
   'student.record.view',
+  'academic.structure.view',
   'attendance.report.view',
   'assessment.marks.validate',
   'assessment.marks.lock',
@@ -119,6 +123,39 @@ const BASE_ROLES: { archetype: RoleArchetype; name: string; description: string 
 const SCHOOLS: { slug: string; name: string; type: InstitutionType; adminEmail: string; adminFirst: string; adminLast: string }[] = [
   { slug: 'northfield', name: 'Northfield Bilingual College', type: 'secondary', adminEmail: 'admin@northfield.school', adminFirst: 'M.', adminLast: 'Ndzana' },
   { slug: 'sunrise', name: 'Sunrise Comprehensive College', type: 'secondary', adminEmail: 'admin@sunrise.school', adminFirst: 'School', adminLast: 'Administrator' },
+];
+
+/** Northfield's demo academic structure (only missing rows are created). */
+const DEMO_YEAR = { name: '2026-2027', start: '2026-09-07', end: '2027-06-30' };
+const DEMO_TERMS = [
+  { name: 'First Term', start: '2026-09-07', end: '2026-12-11' },
+  { name: 'Second Term', start: '2027-01-04', end: '2027-03-26' },
+  { name: 'Third Term', start: '2027-04-12', end: '2027-06-30' },
+];
+const DEMO_SUBJECTS: [code: string, name: string][] = [
+  ['MATH', 'Mathematics'],
+  ['ENG', 'English Language'],
+  ['FRE', 'French'],
+  ['PHY', 'Physics'],
+  ['CHEM', 'Chemistry'],
+  ['BIO', 'Biology'],
+  ['HIST', 'History'],
+  ['GEO', 'Geography'],
+  ['CS', 'Computer Science'],
+  ['CIV', 'Citizenship Education'],
+];
+const LOWER_COEFFICIENTS: Record<string, number> = {
+  MATH: 4, ENG: 4, FRE: 3, PHY: 2, CHEM: 2, BIO: 2, HIST: 2, GEO: 2, CS: 2, CIV: 1,
+};
+const SIXTH_COEFFICIENTS: Record<string, number> = { MATH: 5, PHY: 5, CHEM: 4, BIO: 4, CS: 3, ENG: 2, FRE: 2 };
+const DEMO_CLASSES: { name: string; level: number; sections: string[]; coefficients: Record<string, number> }[] = [
+  { name: 'Form 1', level: 1, sections: ['A', 'B'], coefficients: LOWER_COEFFICIENTS },
+  { name: 'Form 2', level: 2, sections: ['A', 'B'], coefficients: LOWER_COEFFICIENTS },
+  { name: 'Form 3', level: 3, sections: ['A'], coefficients: LOWER_COEFFICIENTS },
+  { name: 'Form 4', level: 4, sections: ['A'], coefficients: LOWER_COEFFICIENTS },
+  { name: 'Form 5', level: 5, sections: ['A'], coefficients: LOWER_COEFFICIENTS },
+  { name: 'Lower Sixth', level: 6, sections: ['Science'], coefficients: SIXTH_COEFFICIENTS },
+  { name: 'Upper Sixth', level: 7, sections: ['Science'], coefficients: SIXTH_COEFFICIENTS },
 ];
 
 const SUPER_ADMIN_EMAIL = process.env.SEED_SUPERADMIN_EMAIL ?? 'superadmin@yese.local';
@@ -161,6 +198,59 @@ async function grant(tenantId: string, roleId: string, codes: string[], permissi
     }),
     skipDuplicates: true,
   });
+}
+
+const day = (value: string) => new Date(`${value}T00:00:00.000Z`);
+
+/** Demo academic structure; never overwrites what the school changed. */
+async function seedAcademic(tenantId: string) {
+  const hasCurrent = await prisma.academicYear.findFirst({ where: { tenantId, isCurrent: true } });
+  const year = await prisma.academicYear.upsert({
+    where: { tenantId_name: { tenantId, name: DEMO_YEAR.name } },
+    update: {},
+    create: { tenantId, name: DEMO_YEAR.name, startDate: day(DEMO_YEAR.start), endDate: day(DEMO_YEAR.end), isCurrent: !hasCurrent },
+  });
+  for (const t of DEMO_TERMS) {
+    await prisma.term.upsert({
+      where: { academicYearId_name: { academicYearId: year.id, name: t.name } },
+      update: {},
+      create: { tenantId, academicYearId: year.id, name: t.name, startDate: day(t.start), endDate: day(t.end) },
+    });
+  }
+
+  const subjectIds = new Map<string, string>();
+  for (const [code, name] of DEMO_SUBJECTS) {
+    const subject = await prisma.subject.upsert({
+      where: { tenantId_code: { tenantId, code } },
+      update: {},
+      create: { tenantId, code, name },
+    });
+    subjectIds.set(code, subject.id);
+  }
+
+  for (const c of DEMO_CLASSES) {
+    const schoolClass = await prisma.schoolClass.upsert({
+      where: { tenantId_name: { tenantId, name: c.name } },
+      update: {},
+      create: { tenantId, name: c.name, level: c.level },
+    });
+    for (const name of c.sections) {
+      await prisma.section.upsert({
+        where: { classId_name: { classId: schoolClass.id, name } },
+        update: {},
+        create: { tenantId, classId: schoolClass.id, name, capacity: 50 },
+      });
+    }
+    await prisma.classSubject.createMany({
+      data: Object.entries(c.coefficients).map(([code, coefficient]) => ({
+        tenantId,
+        classId: schoolClass.id,
+        subjectId: subjectIds.get(code)!,
+        coefficient,
+      })),
+      skipDuplicates: true,
+    });
+  }
 }
 
 // ------------------------------------------------------------------ main
@@ -263,6 +353,8 @@ async function main() {
         create: { tenantId: tenant.id, moduleCode, active: true },
       });
     }
+
+    if (s.slug === 'northfield') await seedAcademic(tenant.id);
   }
 
   // 5. Audit

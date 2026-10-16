@@ -4,6 +4,8 @@ import Link from "next/link";
 import { useAppSelector } from "@/store/hooks";
 import AppHeader from "@/components/layout/AppHeader";
 import { useGetSchoolModulesQuery } from "@/lib/api/modulesApi";
+import { useGetCurrentPeriodQuery } from "@/lib/api/academicApi";
+import { can, PERMISSIONS } from "@/lib/auth/permissions";
 
 /** Groups "student.record.view" style codes by their module (first segment). */
 function byModule(permissions: string[]): [string, string[]][] {
@@ -23,6 +25,9 @@ function byModule(permissions: string[]): [string, string[]][] {
 export default function Dashboard() {
   const user = useAppSelector((state) => state.auth.user);
   const modules = useGetSchoolModulesQuery(undefined, { skip: !user?.school });
+  const academicActive = (modules.data ?? []).some((m) => m.code === "academic" && m.active);
+  const showPeriod = academicActive && can(user, PERMISSIONS.academicView);
+  const period = useGetCurrentPeriodQuery(undefined, { skip: !showPeriod });
   if (!user) return null;
 
   return (
@@ -72,6 +77,25 @@ export default function Dashboard() {
             </ul>
           </section>
         </div>
+
+        {showPeriod && (
+          <section className="mt-4 rounded-xl border border-line bg-white p-5">
+            <h2 className="text-sm font-semibold text-muted">School calendar</h2>
+            {period.data?.year ? (
+              <p className="mt-2">
+                <span className="font-semibold">{period.data.year.name}</span>
+                <span className="text-muted">
+                  {period.data.term ? ` · ${period.data.term.name}` : " · between terms"}
+                </span>
+              </p>
+            ) : (
+              <p className="mt-2 text-sm text-muted">No current academic year yet.</p>
+            )}
+            <Link href="/academic" className="mt-2 inline-block text-sm text-brand hover:underline">
+              Academic structure
+            </Link>
+          </section>
+        )}
 
         {user.school && (
           <section className="mt-4 rounded-xl border border-line bg-white p-5">
