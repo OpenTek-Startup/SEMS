@@ -7,11 +7,19 @@ import { can, PERMISSIONS } from "@/lib/auth/permissions";
 import { useAppSelector } from "@/store/hooks";
 import { secondaryButtonClass } from "@/components/ui/styles";
 
-const NAV = [
+type NavItem = {
+  href: string;
+  label: string;
+  /** null: any signed-in school user; "superAdmin": the platform Super Admin only */
+  permission: string | null | "superAdmin";
+};
+
+const NAV: NavItem[] = [
   { href: "/dashboard", label: "Dashboard", permission: null },
   { href: "/users", label: "Users", permission: PERMISSIONS.userView },
   { href: "/audit", label: "Audit log", permission: PERMISSIONS.auditView },
-] as const;
+  { href: "/platform", label: "Schools & modules", permission: "superAdmin" },
+];
 
 /**
  * Top bar shared by the signed-in pages. Menu entries the user has no
@@ -24,7 +32,11 @@ export default function AppHeader() {
   if (!user) return null;
 
   const roleNames = user.roles.map((r) => r.name).join(", ") || "No role yet";
-  const links = NAV.filter((item) => item.permission === null || can(user, item.permission));
+  const links = NAV.filter((item) => {
+    if (item.permission === null) return true;
+    if (item.permission === "superAdmin") return user.isSuperAdmin;
+    return can(user, item.permission);
+  });
 
   return (
     <header className="border-b border-line bg-white">

@@ -5,6 +5,7 @@ export const AUDIT_CATEGORIES = [
   { value: "", label: "All events" },
   { value: "auth.", label: "Sign-in and sessions" },
   { value: "user.", label: "User accounts" },
+  { value: "module.", label: "Modules" },
 ] as const;
 
 const SIGN_IN_FAILURE: Record<string, string> = {
@@ -56,6 +57,10 @@ export function describeAudit(item: AuditItem): string {
       return `Changed the roles of ${targetName(item)}`;
     case "user.password.reset":
       return `Reset the password of ${targetName(item)}`;
+    case "module.activated":
+      return `Activated the ${detailText(item, "module")} module`;
+    case "module.deactivated":
+      return `Deactivated the ${detailText(item, "module")} module`;
     default:
       return item.action;
   }
