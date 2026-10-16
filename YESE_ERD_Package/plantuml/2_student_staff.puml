@@ -1,0 +1,113 @@
+@startuml student_staff
+!pragma layout smetana
+!include _theme.puml
+title YESE — Student & Staff Domains
+
+package "Student Domain" {
+  entity "STUDENT" as STU {
+    * student_id : UUID <<PK>>
+    --
+    * tenant_id : UUID <<FK>>
+    user_id : UUID <<FK>>
+    * matricule : VARCHAR <<UQ>>
+    * first_name : VARCHAR
+    * last_name : VARCHAR
+    * status_id : UUID <<FK>>
+  }
+  entity "STUDENT_PROFILE" as SP {
+    * student_id : UUID <<PK,FK>>
+    --
+    date_of_birth : DATE
+    gender : VARCHAR
+    address : VARCHAR
+    phone : VARCHAR
+  }
+  entity "STUDENT_STATUS" as SS {
+    * status_id : UUID <<PK>>
+    --
+    * tenant_id : UUID <<FK>>
+    * name : VARCHAR
+  }
+  entity "GUARDIAN" as GRD {
+    * guardian_id : UUID <<PK>>
+    --
+    * tenant_id : UUID <<FK>>
+    user_id : UUID <<FK>>
+    * first_name : VARCHAR
+    * last_name : VARCHAR
+    phone : VARCHAR
+  }
+  entity "STUDENT_GUARDIAN" as SG {
+    * student_id : UUID <<FK>>
+    * guardian_id : UUID <<FK>>
+    --
+    relationship : VARCHAR
+    is_primary : BOOLEAN
+  }
+  entity "STUDENT_DOCUMENT" as SD {
+    * document_id : UUID <<PK>>
+    --
+    * student_id : UUID <<FK>>
+    type : VARCHAR
+    file_url : VARCHAR
+  }
+}
+
+package "Staff Domain" {
+  entity "STAFF" as STF {
+    * staff_id : UUID <<PK>>
+    --
+    * tenant_id : UUID <<FK>>
+    * user_id : UUID <<FK>>
+    * staff_number : VARCHAR <<UQ>>
+    * first_name : VARCHAR
+    * last_name : VARCHAR
+    * staff_type_id : UUID <<FK>>
+    * status_id : UUID <<FK>>
+  }
+  entity "STAFF_PROFILE" as STFP {
+    * staff_id : UUID <<PK,FK>>
+    --
+    date_of_birth : DATE
+    gender : VARCHAR
+    qualification : VARCHAR
+    phone : VARCHAR
+  }
+  entity "STAFF_TYPE" as STT {
+    * staff_type_id : UUID <<PK>>
+    --
+    * tenant_id : UUID <<FK>>
+    * name : VARCHAR
+  }
+  entity "STAFF_STATUS" as STS {
+    * status_id : UUID <<PK>>
+    --
+    * tenant_id : UUID <<FK>>
+    * name : VARCHAR
+  }
+  entity "STAFF_ASSIGNMENT" as STA {
+    * assignment_id : UUID <<PK>>
+    --
+    * staff_id : UUID <<FK>>
+    role_label : VARCHAR
+    department_id : UUID <<FK>>
+    start_date : DATE
+  }
+}
+
+STU ||--|| SP
+SS ||--o{ STU
+STU ||--o{ SG
+GRD ||--o{ SG
+STU ||--o{ SD
+STF ||--|| STFP
+STT ||--o{ STF
+STS ||--o{ STF
+STF ||--o{ STA
+
+note bottom of STU
+  Not every student has a user account
+  (primary pupils may have none).
+  Student–Guardian is many-to-many.
+end note
+@enduml
