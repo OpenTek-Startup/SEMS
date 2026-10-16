@@ -58,6 +58,10 @@ export class FakeAuthDb {
   userRoles: FakeUserRole[] = [];
   sessions: Row[] = [];
   audit: Row[] = [];
+  /** Module catalogue: { code, name, category, description, dependsOn } */
+  modules: Row[] = [];
+  /** Module Registry rows: { tenantId, moduleCode, active } */
+  tenantModules: Row[] = [];
 
   reset() {
     this.tenants = [];
@@ -66,6 +70,13 @@ export class FakeAuthDb {
     this.userRoles = [];
     this.sessions = [];
     this.audit = [];
+    this.modules = [];
+    this.tenantModules = [];
+  }
+
+  /** Switch modules on for a school (test setup). */
+  activate(tenantId: string, codes: string[]) {
+    for (const moduleCode of codes) this.tenantModules.push({ tenantId, moduleCode, active: true });
   }
 
   addUser(user: Row, roleIds: string[] = []): Row {
@@ -184,6 +195,28 @@ export class FakeAuthDb {
       const hits = this.sessions.filter((s) => matches(s, where));
       for (const s of hits) Object.assign(s, data);
       return { count: hits.length };
+    },
+  };
+
+  readonly tenant = {
+    findMany: async () => [...this.tenants].sort((a, b) => a.name.localeCompare(b.name)),
+  };
+
+  readonly module = {
+    findMany: async () =>
+      [...this.modules]
+        .sort((a, b) => a.code.localeCompare(b.code))
+        .map((m) => ({ description: null, dependsOn: [], ...m })),
+  };
+
+  readonly tenantModule = {
+    findMany: async ({ where }: Row = {}) => this.tenantModules.filter((r) => matches(r, where)).map((r) => ({ ...r })),
+    upsert: async ({ where, update, create }: Row) => {
+      const key = where.tenantId_moduleCode;
+      const row = this.tenantModules.find((r) => r.tenantId === key.tenantId && r.moduleCode === key.moduleCode);
+      if (row) Object.assign(row, update);
+      else this.tenantModules.push({ ...create });
+      return { ...(row ?? create) };
     },
   };
 
