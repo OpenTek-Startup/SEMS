@@ -59,6 +59,20 @@ enum ModuleCategory {
   @@map("module_category")
 }
 
+enum StaffCategory {
+  teaching
+  non_teaching
+
+  @@map("staff_category")
+}
+
+enum StaffStatus {
+  active
+  inactive
+
+  @@map("staff_status")
+}
+
 // -------------------------------------------------------------- tenancy
 
 /// One school (tenant). Root of all tenant-scoped data.
@@ -85,6 +99,7 @@ model Tenant {
   sections        Section[]
   subjects        Subject[]
   classSubjects   ClassSubject[]
+  staffMembers    StaffMember[]
 
   @@map("tenants")
 }
@@ -111,6 +126,7 @@ model User {
   roles     UserRole[]
   auditLogs AuditLog[]
   sessions  Session[]
+  staff     StaffMember?
 
   // Email is unique per school. (Super Admin emails are checked in code,
   // because PostgreSQL treats NULL tenant_id values as distinct.)
@@ -364,6 +380,40 @@ model ClassSubject {
   @@index([tenantId])
   @@index([subjectId])
   @@map("class_subjects")
+}
+
+// ---------------------------------------------------------------- staff
+// Staff module (Phase 2). A staff record exists whether or not the person
+// signs in; when they do, it is linked to their user account (one record per
+// account). Teacher assignments (W9) refer to staff records.
+
+/// A member of staff, teaching or not, e.g. "STF-0007 Ngwa Brenda, Mathematics teacher".
+model StaffMember {
+  id          String        @id @default(uuid()) @db.Uuid
+  tenantId    String        @map("tenant_id") @db.Uuid
+  /// School-wide staff number, e.g. "STF-0007" (generated when not given).
+  staffNumber String        @map("staff_number")
+  firstName   String        @map("first_name")
+  lastName    String        @map("last_name")
+  email       String?
+  phone       String?
+  /// Job title, e.g. "Mathematics teacher", "Bursar".
+  position    String
+  category    StaffCategory @default(teaching)
+  /// inactive: has left the school; the record is kept for history.
+  status      StaffStatus   @default(active)
+  hireDate    DateTime?     @map("hire_date") @db.Date
+  /// The person's user account in the same school, if they sign in.
+  userId      String?       @unique @map("user_id") @db.Uuid
+  createdAt   DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime      @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  user   User?  @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@unique([tenantId, staffNumber])
+  @@index([tenantId])
+  @@map("staff_members")
 }
 
 // ---------------------------------------------------------------- audit

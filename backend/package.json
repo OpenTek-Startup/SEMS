@@ -24,6 +24,7 @@
     "db:migrate": "prisma migrate dev",
     "db:status": "prisma migrate status",
     "db:seed": "prisma db seed",
+    "db:set-password": "tsx prisma/set-password.ts",
     "db:studio": "prisma studio"
   },
   "dependencies": {
