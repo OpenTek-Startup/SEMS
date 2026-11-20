@@ -10,6 +10,7 @@ import { TenantPrismaService } from './../src/core/tenancy/tenant-prisma.service
 import { FakeAuthDb } from './fake-auth-db';
 import { RequireModule, RequirePermission } from './../src/core/auth/decorators';
 import { ModuleRegistryService } from './../src/core/modules/module-registry.service';
+import { TenantDirectory } from './../src/core/tenancy/tenant-directory.service';
 
 // The e2e suite runs without a real database (also in CI):
 // the Prisma client is replaced by fakes whose answers we control.
@@ -47,20 +48,33 @@ describe('YESE API (e2e)', () => {
   let app: INestApplication<App>;
 
   beforeAll(async () => {
+    // The unscoped client (platform code, auth, tenant lookup).
+    const unscoped: Record<string, any> = {
+      $queryRaw: queryRaw,
+      tenant: {
+        findUnique: findTenant,
+        findMany: fakeDb.tenant.findMany,
+        create: fakeDb.tenant.create,
+        update: fakeDb.tenant.update,
+      },
+      module: fakeDb.module,
+      tenantModule: fakeDb.tenantModule,
+      user: fakeDb.user,
+      session: fakeDb.session,
+      auditLog: fakeDb.auditLog,
+      permission: fakeDb.permission,
+      role: fakeDb.role,
+      rolePermission: fakeDb.rolePermission,
+      userRole: fakeDb.userRole,
+    };
+    unscoped.$transaction = (fn: (tx: Record<string, any>) => Promise<unknown>) => fn(unscoped);
+
     const moduleFixture: TestingModule = await Test.createTestingModule({
       imports: [AppModule],
       controllers: [ProbeController],
     })
       .overrideProvider(PrismaService)
-      .useValue({
-        $queryRaw: queryRaw,
-        tenant: { findUnique: findTenant, findMany: fakeDb.tenant.findMany },
-        module: fakeDb.module,
-        tenantModule: fakeDb.tenantModule,
-        user: fakeDb.user,
-        session: fakeDb.session,
-        auditLog: fakeDb.auditLog,
-      })
+      .useValue(unscoped)
       // School-scoped client: the fake behind the REAL tenant-scope rules.
       .overrideProvider(TenantPrismaService)
       .useValue({ db: fakeDb.scoped() })
@@ -216,7 +230,8 @@ describe('YESE API (e2e)', () => {
 
     beforeEach(() => {
       fakeDb.reset();
-      fakeDb.tenants = [NORTHFIELD, SUNRISE];
+      // Copies: a test may suspend a school, the next one starts fresh.
+      fakeDb.tenants = [{ ...NORTHFIELD }, { ...SUNRISE }];
       fakeDb.roles = [
         { id: ROLE_ADMIN, tenantId: NORTHFIELD.id, name: 'Administrator', archetype: 'admin', permissions: ADMIN_PERMISSIONS },
         {
@@ -265,8 +280,12 @@ describe('YESE API (e2e)', () => {
         isSuperAdmin: true,
       });
       findTenant.mockImplementation(({ where }: { where: { slug?: string; id?: string } }) =>
-        Promise.resolve([NORTHFIELD, SUNRISE].find((t) => t.slug === where.slug || t.id === where.id) ?? null),
+        Promise.resolve(
+          // A copy, like a real database read: a cached answer only changes when the cache is cleared.
+          ((t) => (t ? { ...t } : null))(fakeDb.tenants.find((t) => t.slug === where.slug || t.id === where.id)),
+        ),
       );
+      app.get(TenantDirectory).invalidateAll();
 
       // Module Registry: a small catalogue; Northfield runs Students + Academic, Sunrise only Students.
       fakeDb.modules = [
@@ -919,6 +938,284 @@ describe('YESE API (e2e)', () => {
 
         const sa = await superAdmin();
         await http().get('/api/modules').set(sa).expect(400);
+      });
+    });
+
+    describe('schools: create, suspend, reactivate (FR-PL-01, FR-PL-02)', () => {
+      const OTHER_ID = '99999999-9999-4999-8999-999999999999';
+      const NEW_SCHOOL = {
+        name: '  Hillside   College ',
+        slug: ' Hillside ',
+        type: 'secondary',
+        adminEmail: 'Head@Hillside.school',
+        adminFirstName: 'Ama',
+        adminLastName: 'Tabi',
+      };
+
+      async function superAdmin() {
+        const { token } = await signIn('superadmin@yese.local', null);
+        return { Authorization: `Bearer ${token}` };
+      }
+
+      beforeEach(() => {
+        fakeDb.permissions = [
+          'core.user.view',
+          'core.user.manage',
+          'core.role.manage',
+          'core.audit.view',
+          'student.record.view',
+          'staff.record.view',
+          'academic.structure.view',
+        ].map((code, i) => ({ id: `f0000000-0000-4000-8000-00000000000${i}`, code }));
+      });
+
+      it('only the Super Admin can create or suspend a school', async () => {
+        await http().post('/api/platform/schools').send(NEW_SCHOOL).expect(401);
+        const { token } = await signIn('admin@northfield.school');
+        const admin = { 'X-Tenant': 'northfield', Authorization: `Bearer ${token}` };
+        const res = await http().post('/api/platform/schools').set(admin).send(NEW_SCHOOL).expect(403);
+        expect(res.body.error.code).toBe('SUPER_ADMIN_ONLY');
+        await http().patch(`/api/platform/schools/${SUNRISE.id}/status`).set(admin).send({ status: 'suspended' }).expect(403);
+      });
+
+      it('creates the school, its four base roles and a first administrator who must change the password', async () => {
+        const sa = await superAdmin();
+        // Unknown before, and that answer is cached: creating the school must clear it.
+        await http().get('/api/tenant/current').set('X-Tenant', 'hillside').expect(404);
+
+        const res = await http().post('/api/platform/schools').set(sa).send(NEW_SCHOOL).expect(201);
+        const { school, admin, temporaryPassword } = res.body.data;
+        expect(school).toMatchObject({ slug: 'hillside', name: 'Hillside College', type: 'secondary', status: 'active', activeModules: ['core'] });
+        expect(admin).toEqual({ email: 'head@hillside.school', firstName: 'Ama', lastName: 'Tabi' });
+        expect(temporaryPassword).toMatch(/^[A-Za-z0-9]{4}-[A-Za-z0-9]{4}-[A-Za-z0-9]{4}$/);
+
+        const roles = fakeDb.roles.filter((r) => r.tenantId === school.id);
+        expect(roles.map((r) => r.name).sort()).toEqual(['Administrator', 'Parent', 'Staff / Teacher', 'Student']);
+        expect(roles.find((r) => r.archetype === 'admin')!.permissions).toHaveLength(fakeDb.permissions.length);
+        expect(roles.find((r) => r.archetype === 'staff')!.permissions.sort()).toEqual([
+          'academic.structure.view',
+          'staff.record.view',
+          'student.record.view',
+        ]);
+        expect(roles.find((r) => r.archetype === 'parent')!.permissions).toEqual([]);
+
+        const audit = fakeDb.audit.find((a) => a.action === 'tenant.created');
+        expect(audit).toMatchObject({ tenantId: school.id, entity: 'tenant', entityId: school.id, detail: { slug: 'hillside' } });
+
+        const login = await signIn('head@hillside.school', 'hillside', temporaryPassword);
+        expect(login.res.body.data.user).toMatchObject({
+          mustChangePassword: true,
+          school: { id: school.id, slug: 'hillside', name: 'Hillside College' },
+        });
+        expect(login.res.body.data.user.roles.map((r: { name: string }) => r.name)).toEqual(['Administrator']);
+
+        const schools = (await http().get('/api/platform/schools').set(sa).expect(200)).body.data;
+        expect(schools.map((s: { slug: string }) => s.slug)).toEqual(['hillside', 'northfield', 'sunrise']);
+      });
+
+      it('refuses taken, reserved or badly formed school codes', async () => {
+        const sa = await superAdmin();
+        const send = (body: object) => http().post('/api/platform/schools').set(sa).send({ ...NEW_SCHOOL, ...body });
+
+        expect((await send({ slug: 'Northfield' }).expect(409)).body.error.code).toBe('SLUG_TAKEN');
+        expect((await send({ slug: 'admin' }).expect(400)).body.error.code).toBe('SLUG_RESERVED');
+        expect((await send({ slug: 'hill side' }).expect(400)).body.error.code).toBe('SLUG_INVALID');
+        expect((await send({ slug: 'hi' }).expect(400)).body.error.code).toBe('SLUG_INVALID');
+        await send({ type: 'college' }).expect(400);
+        await send({ adminEmail: 'not-an-email' }).expect(400);
+        await send({ name: '   ' }).expect(400);
+        expect(fakeDb.tenants).toHaveLength(2);
+      });
+
+      it('suspending closes the school at once and signs everyone out; reactivating opens it again', async () => {
+        const sa = await superAdmin();
+        const { token } = await signIn('admin@sunrise.school', 'sunrise');
+        const sunrise = { 'X-Tenant': 'sunrise', Authorization: `Bearer ${token}` };
+        await http().get('/api/auth/me').set(sunrise).expect(200); // the school is now cached as active
+
+        const suspended = await http().patch(`/api/platform/schools/${SUNRISE.id}/status`).set(sa).send({ status: 'suspended' }).expect(200);
+        expect(suspended.body.data).toMatchObject({ slug: 'sunrise', status: 'suspended' });
+
+        const blocked = await http().get('/api/auth/me').set(sunrise).expect(403);
+        expect(blocked.body.error.code).toBe('SCHOOL_SUSPENDED');
+        await http().post('/api/auth/login').set('X-Tenant', 'sunrise').send({ email: 'admin@sunrise.school', password: PASSWORD }).expect(403);
+        const sessions = fakeDb.sessions.filter((s) => s.tenantId === SUNRISE.id);
+        expect(sessions.length).toBeGreaterThan(0);
+        expect(sessions.every((s) => s.revokedReason === 'school_suspended')).toBe(true);
+
+        // Other schools are not affected.
+        await signIn('admin@northfield.school');
+
+        await http().patch(`/api/platform/schools/${SUNRISE.id}/status`).set(sa).send({ status: 'active' }).expect(200);
+        await signIn('admin@sunrise.school', 'sunrise');
+        expect(fakeDb.actions()).toEqual(expect.arrayContaining(['tenant.suspended', 'tenant.reactivated']));
+
+        await http().patch(`/api/platform/schools/${OTHER_ID}/status`).set(sa).send({ status: 'active' }).expect(404);
+        await http().patch(`/api/platform/schools/${SUNRISE.id}/status`).set(sa).send({ status: 'closed' }).expect(400);
+      });
+    });
+
+    describe('staff (Phase 2)', () => {
+      const STAFF = ['staff.record.edit', 'staff.record.view'];
+      const OTHER_ID = '99999999-9999-4999-8999-999999999999';
+
+      async function as(email: string, school = 'northfield') {
+        const { token } = await signIn(email, school);
+        return { 'X-Tenant': school, Authorization: `Bearer ${token}` };
+      }
+      const admin = () => as('admin@northfield.school');
+      const post = (auth: Record<string, string>, body: object) => http().post('/api/staff').set(auth).send(body);
+      const patch = (auth: Record<string, string>, url: string, body: object) =>
+        http().patch(`/api/staff${url}`).set(auth).send(body);
+      const get = (auth: Record<string, string>, url = '') => http().get(`/api/staff${url}`).set(auth);
+      const BRENDA = {
+        firstName: ' Brenda ',
+        lastName: 'Ngwa',
+        position: 'Mathematics   teacher',
+        email: 'B.Ngwa@Northfield.school',
+        phone: ' +237 677 12 34 56',
+        hireDate: '2019-09-02',
+      };
+
+      beforeEach(() => {
+        fakeDb.modules.push({ code: 'staff', name: 'Staff', category: 'business', dependsOn: [] });
+        fakeDb.activate(NORTHFIELD.id, ['staff']);
+        app.get(ModuleRegistryService).invalidateAll();
+        // Northfield's administrator manages staff; the teacher may only read the list.
+        for (const role of fakeDb.roles) {
+          if (role.id === ROLE_ADMIN) role.permissions = [...ADMIN_PERMISSIONS, ...STAFF];
+          if (role.id === ROLE_SUNRISE_ADMIN) role.permissions = [...ADMIN_PERMISSIONS, ...STAFF];
+          if (role.id === ROLE_TEACHER) role.permissions = [...role.permissions, 'staff.record.view'];
+        }
+      });
+
+      it('needs the Staff module and the staff permissions', async () => {
+        await http().get('/api/staff').set('X-Tenant', 'northfield').expect(401);
+
+        const sunrise = await as('admin@sunrise.school', 'sunrise');
+        expect((await get(sunrise).expect(403)).body.error.code).toBe('MODULE_INACTIVE');
+
+        const teacher = await as('teacher@northfield.school');
+        await get(teacher).expect(200);
+        expect((await post(teacher, BRENDA).expect(403)).body.error.code).toBe('PERMISSION_DENIED');
+        await get(teacher, '/accounts').expect(403);
+      });
+
+      it('creates staff with a generated number, cleaned fields and an audit entry', async () => {
+        const auth = await admin();
+        const first = (await post(auth, BRENDA).expect(201)).body.data;
+        expect(first).toMatchObject({
+          staffNumber: 'STF-0001',
+          firstName: 'Brenda',
+          lastName: 'Ngwa',
+          fullName: 'Ngwa Brenda',
+          position: 'Mathematics teacher',
+          email: 'b.ngwa@northfield.school',
+          phone: '+237 677 12 34 56',
+          category: 'teaching',
+          status: 'active',
+          hireDate: '2019-09-02',
+          account: null,
+        });
+
+        const own = (await post(auth, { firstName: 'Peter', lastName: 'Achu', position: 'Bursar', category: 'non_teaching', staffNumber: ' nf/2017/01 ' }).expect(201)).body.data;
+        expect(own).toMatchObject({ staffNumber: 'NF/2017/01', category: 'non_teaching', email: null, phone: null, hireDate: null });
+
+        const next = (await post(auth, { firstName: 'Grace', lastName: 'Mbah', position: 'English teacher' }).expect(201)).body.data;
+        expect(next.staffNumber).toBe('STF-0002');
+
+        const taken = await post(auth, { ...BRENDA, staffNumber: 'stf-0001' }).expect(409);
+        expect(taken.body.error.code).toBe('STAFF_NUMBER_TAKEN');
+        expect((await post(auth, { ...BRENDA, staffNumber: 'a' }).expect(400)).body.error.code).toBe('STAFF_NUMBER_INVALID');
+        expect((await post(auth, { ...BRENDA, phone: '123' }).expect(400)).body.error.code).toBe('PHONE_INVALID');
+        expect((await post(auth, { ...BRENDA, hireDate: '2019-02-30' }).expect(400)).body.error.code).toBe('DATE_INVALID');
+        await post(auth, { ...BRENDA, category: 'cleaner' }).expect(400);
+        await post(auth, { ...BRENDA, position: '  ' }).expect(400);
+        await post(auth, { ...BRENDA, salary: 100000 }).expect(400);
+
+        const entry = fakeDb.audit.find((a) => a.action === 'staff.created' && a.entityId === first.id);
+        expect(entry).toMatchObject({ tenantId: NORTHFIELD.id, entity: 'staff', detail: { staffNumber: 'STF-0001' } });
+      });
+
+      it('lists by name, searches and filters', async () => {
+        const auth = await admin();
+        await post(auth, BRENDA).expect(201);
+        await post(auth, { firstName: 'Éric', lastName: 'Abena', position: 'Bursar', category: 'non_teaching' }).expect(201);
+        const paul = (await post(auth, { firstName: 'Paul', lastName: 'Zama', position: 'History teacher' }).expect(201)).body.data;
+        await patch(auth, `/${paul.id}/status`, { status: 'inactive' }).expect(200);
+
+        const names = (res: { body: { data: { lastName: string }[] } }) => res.body.data.map((s) => s.lastName);
+        expect(names(await get(auth).expect(200))).toEqual(['Abena', 'Ngwa', 'Zama']);
+        expect(names(await get(auth, '?status=active').expect(200))).toEqual(['Abena', 'Ngwa']);
+        expect(names(await get(auth, '?category=teaching').expect(200))).toEqual(['Ngwa', 'Zama']);
+        expect(names(await get(auth, '?search=eric').expect(200))).toEqual(['Abena']);
+        expect(names(await get(auth, '?search=brenda%20math').expect(200))).toEqual(['Ngwa']);
+        await get(auth, '?status=gone').expect(400);
+      });
+
+      it('edits a record, clears optional fields and keeps numbers unique', async () => {
+        const auth = await admin();
+        const brenda = (await post(auth, BRENDA).expect(201)).body.data;
+        const grace = (await post(auth, { firstName: 'Grace', lastName: 'Mbah', position: 'English teacher' }).expect(201)).body.data;
+
+        const edited = (await patch(auth, `/${brenda.id}`, { position: 'Head of Mathematics', phone: null, hireDate: null }).expect(200)).body.data;
+        expect(edited).toMatchObject({ position: 'Head of Mathematics', phone: null, hireDate: null, email: 'b.ngwa@northfield.school' });
+        const entry = fakeDb.audit.filter((a) => a.action === 'staff.updated').pop();
+        expect(entry?.detail).toEqual({ changed: ['hireDate', 'phone', 'position'] });
+
+        const before = fakeDb.audit.length;
+        await patch(auth, `/${brenda.id}`, { position: 'Head of Mathematics' }).expect(200);
+        expect(fakeDb.audit.length).toBe(before); // nothing changed, nothing recorded
+
+        const clash = await patch(auth, `/${grace.id}`, { staffNumber: 'STF-0001' }).expect(409);
+        expect(clash.body.error.code).toBe('STAFF_NUMBER_TAKEN');
+        await patch(auth, `/${grace.id}`, { staffNumber: 'STF-0100' }).expect(200);
+        expect((await get(auth, `/${OTHER_ID}`).expect(404)).body.error.code).toBe('STAFF_NOT_FOUND');
+        await get(auth, '/not-a-uuid').expect(400);
+      });
+
+      it('links a staff record to one user account of the same school', async () => {
+        const auth = await admin();
+        const brenda = (await post(auth, BRENDA).expect(201)).body.data;
+        const grace = (await post(auth, { firstName: 'Grace', lastName: 'Mbah', position: 'English teacher' }).expect(201)).body.data;
+        const teacher = fakeDb.users.find((u) => u.email === 'teacher@northfield.school')!;
+        const sunriseAdmin = fakeDb.users.find((u) => u.email === 'admin@sunrise.school')!;
+
+        const accounts = (await get(auth, '/accounts').expect(200)).body.data as { email: string }[];
+        expect(accounts.map((a) => a.email)).toContain('teacher@northfield.school');
+        expect(accounts.map((a) => a.email)).not.toContain('gone@northfield.school'); // disabled
+        expect(accounts.map((a) => a.email)).not.toContain('admin@sunrise.school'); // other school
+
+        const linked = (await http().put(`/api/staff/${brenda.id}/account`).set(auth).send({ userId: teacher.id }).expect(200)).body.data;
+        expect(linked.account).toEqual({ id: teacher.id, email: 'teacher@northfield.school', status: 'active' });
+        expect(((await get(auth, '/accounts')).body.data as { id: string }[]).map((a) => a.id)).not.toContain(teacher.id);
+
+        const twice = await http().put(`/api/staff/${grace.id}/account`).set(auth).send({ userId: teacher.id }).expect(409);
+        expect(twice.body.error.code).toBe('ACCOUNT_ALREADY_LINKED');
+        const foreign = await http().put(`/api/staff/${grace.id}/account`).set(auth).send({ userId: sunriseAdmin.id }).expect(400);
+        expect(foreign.body.error.code).toBe('USER_NOT_FOUND');
+
+        const unlinked = (await http().put(`/api/staff/${brenda.id}/account`).set(auth).send({ userId: null }).expect(200)).body.data;
+        expect(unlinked.account).toBeNull();
+        expect(fakeDb.actions()).toEqual(expect.arrayContaining(['staff.account.linked', 'staff.account.unlinked']));
+      });
+
+      it("a school never sees another school's staff", async () => {
+        const auth = await admin();
+        const brenda = (await post(auth, BRENDA).expect(201)).body.data;
+
+        fakeDb.activate(SUNRISE.id, ['staff']);
+        app.get(ModuleRegistryService).invalidateAll();
+        const sunrise = await as('admin@sunrise.school', 'sunrise');
+        expect((await get(sunrise).expect(200)).body.data).toEqual([]);
+        await get(sunrise, `/${brenda.id}`).expect(404);
+        await patch(sunrise, `/${brenda.id}`, { position: 'Hacked' }).expect(404);
+        await patch(sunrise, `/${brenda.id}/status`, { status: 'inactive' }).expect(404);
+
+        // Sunrise numbers its own staff from STF-0001 too.
+        const own = (await post(sunrise, { firstName: 'Ada', lastName: 'Ebot', position: 'Biology teacher' }).expect(201)).body.data;
+        expect(own.staffNumber).toBe('STF-0001');
+        expect(fakeDb.staffMembers.rows.find((r) => r.id === brenda.id)).toMatchObject({ tenantId: NORTHFIELD.id, position: 'Mathematics teacher' });
       });
     });
 
