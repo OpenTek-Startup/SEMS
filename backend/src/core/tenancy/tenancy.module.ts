@@ -1,5 +1,6 @@
 import { Global, MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
 import { TenancyController } from './tenancy.controller';
+import { TenantDirectory } from './tenant-directory.service';
 import { TenantMiddleware } from './tenant.middleware';
 import { TenantPrismaService } from './tenant-prisma.service';
 
@@ -10,8 +11,8 @@ import { TenantPrismaService } from './tenant-prisma.service';
 @Global()
 @Module({
   controllers: [TenancyController],
-  providers: [TenantMiddleware, TenantPrismaService],
-  exports: [TenantPrismaService, TenantMiddleware],
+  providers: [TenantDirectory, TenantPrismaService],
+  exports: [TenantPrismaService, TenantDirectory],
 })
 export class TenancyModule implements NestModule {
   configure(consumer: MiddlewareConsumer) {

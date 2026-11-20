@@ -12,6 +12,8 @@ export const PERMISSIONS = {
   auditView: "core.audit.view",
   academicView: "academic.structure.view",
   academicManage: "academic.structure.manage",
+  staffView: "staff.record.view",
+  staffEdit: "staff.record.edit",
 } as const;
 
 /** True when the user holds every listed permission. */

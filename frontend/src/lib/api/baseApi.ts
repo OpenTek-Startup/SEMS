@@ -57,6 +57,7 @@ const EXPLAINED = new Set([
   "REFRESH_TOKEN_REUSED",
   "ACCOUNT_DISABLED",
   "WRONG_SCHOOL",
+  "SCHOOL_SUSPENDED",
 ]);
 
 let refreshInFlight: Promise<boolean> | null = null;
@@ -116,11 +117,11 @@ const baseQueryWithReauth: BaseQueryFn<
     }
   }
 
-  if (
-    result.error?.status === 403 &&
-    apiErrorCode(result.error) === "PASSWORD_CHANGE_REQUIRED"
-  ) {
-    api.dispatch(passwordChangeRequired());
+  if (result.error?.status === 403) {
+    const code = apiErrorCode(result.error);
+    if (code === "PASSWORD_CHANGE_REQUIRED") api.dispatch(passwordChangeRequired());
+    // The Super Admin suspended the school: nothing here works any more.
+    if (code === "SCHOOL_SUSPENDED") api.dispatch(signedOut(apiErrorMessage(result.error)));
   }
   return result;
 };

@@ -35,6 +35,8 @@ export interface FakeTenant {
   id: string;
   slug: string;
   name: string;
+  type?: string;
+  status?: string;
 }
 
 export interface FakeRole {
@@ -117,6 +119,8 @@ export class FakeAuthDb {
   modules: Row[] = [];
   /** Module Registry rows: { tenantId, moduleCode, active } */
   tenantModules: Row[] = [];
+  /** Permission catalogue: { id, code } (school creation grants from it) */
+  permissions: Row[] = [];
   /** Academic structure (Phase 2) */
   readonly academicYears = new FakeTable();
   readonly terms = new FakeTable();
@@ -124,6 +128,8 @@ export class FakeAuthDb {
   readonly sections = new FakeTable();
   readonly subjects = new FakeTable();
   readonly classSubjects = new FakeTable(false);
+  /** Staff (Phase 2) */
+  readonly staffMembers = new FakeTable();
 
   reset() {
     this.tenants = [];
@@ -134,7 +140,8 @@ export class FakeAuthDb {
     this.audit = [];
     this.modules = [];
     this.tenantModules = [];
-    for (const t of [this.academicYears, this.terms, this.classes, this.sections, this.subjects, this.classSubjects]) {
+    this.permissions = [];
+    for (const t of [this.academicYears, this.terms, this.classes, this.sections, this.subjects, this.classSubjects, this.staffMembers]) {
       t.rows = [];
     }
   }
@@ -217,9 +224,41 @@ export class FakeAuthDb {
   readonly role = {
     findMany: async ({ where }: Row = {}) =>
       this.roles.filter((r) => matches(r, where)).map((r) => this.roleView(r)),
+    create: async ({ data }: Row) => {
+      const role: FakeRole = {
+        id: randomUUID(),
+        tenantId: data.tenantId,
+        name: data.name,
+        archetype: data.archetype ?? null,
+        permissions: [],
+      };
+      this.roles.push(role);
+      return this.roleView(role);
+    },
+  };
+
+  readonly permission = {
+    findMany: async () => this.permissions.map((p) => ({ ...p })),
+  };
+
+  /** Grants are stored on the fake role as permission codes. */
+  readonly rolePermission = {
+    createMany: async ({ data }: Row) => {
+      const rows = (Array.isArray(data) ? data : [data]) as Row[];
+      for (const d of rows) {
+        const role = this.roles.find((r) => r.id === d.roleId);
+        const permission = this.permissions.find((p) => p.id === d.permissionId);
+        if (role && permission && !role.permissions.includes(permission.code)) role.permissions.push(permission.code);
+      }
+      return { count: rows.length };
+    },
   };
 
   readonly userRole = {
+    create: async ({ data }: Row) => {
+      this.userRoles.push({ ...(data as FakeUserRole) });
+      return { ...data };
+    },
     deleteMany: async ({ where }: Row = {}) => {
       const before = this.userRoles.length;
       this.userRoles = this.userRoles.filter((ur) => !matches(ur, where));
@@ -265,6 +304,21 @@ export class FakeAuthDb {
 
   readonly tenant = {
     findMany: async () => [...this.tenants].sort((a, b) => a.name.localeCompare(b.name)),
+    findUnique: async ({ where }: Row) => {
+      const tenant = this.tenants.find((t) => matches(t, where));
+      return tenant ? { ...tenant } : null;
+    },
+    create: async ({ data }: Row) => {
+      const tenant = { id: randomUUID(), status: 'active', ...data } as FakeTenant;
+      this.tenants.push(tenant);
+      return { ...tenant };
+    },
+    update: async ({ where, data }: Row) => {
+      const tenant = this.tenants.find((t) => matches(t, where));
+      if (!tenant) throw new Error('tenant not found');
+      Object.assign(tenant, data);
+      return { ...tenant };
+    },
   };
 
   readonly module = {
@@ -330,6 +384,7 @@ export class FakeAuthDb {
       section: this.sections.ops,
       subject: this.subjects.ops,
       classSubject: this.classSubjects.ops,
+      staffMember: this.staffMembers.ops,
     };
     const client: Row = {};
     for (const [key, ops] of Object.entries(models)) {

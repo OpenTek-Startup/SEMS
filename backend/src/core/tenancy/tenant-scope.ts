@@ -27,6 +27,8 @@ export const TENANT_OWNED_MODELS = new Set<string>([
   'Section',
   'Subject',
   'ClassSubject',
+  // Staff (Phase 2)
+  'StaffMember',
 ]);
 
 const WHERE_OPS = new Set([

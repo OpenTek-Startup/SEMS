@@ -12,6 +12,7 @@ import { UsersModule } from './modules/users/users.module';
 import { AuditViewerModule } from './modules/audit/audit-viewer.module';
 import { PlatformModule } from './modules/platform/platform.module';
 import { AcademicModule } from './modules/academic/academic.module';
+import { StaffModule } from './modules/staff/staff.module';
 
 @Module({
   imports: [
@@ -37,6 +38,7 @@ import { AcademicModule } from './modules/academic/academic.module';
 
     // School core (Phase 2)
     AcademicModule,
+    StaffModule,
   ],
 })
 export class AppModule {}

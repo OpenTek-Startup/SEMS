@@ -8,6 +8,7 @@
  *  - the four base roles per school, plus an "Exam Officer" custom role at Northfield
  *  - one administrator account per school
  *  - a demo academic structure for Northfield (year, terms, classes, sections, subjects)
+ *  - demo staff records for Northfield
  *
  * Passwords: set SEED_DEFAULT_PASSWORD in .env to choose one. Otherwise a random
  * password is generated and printed ONCE at the end. Every seeded account must
@@ -23,6 +24,7 @@ import type {
   ModuleCategory,
   RoleArchetype,
 } from '../src/generated/prisma/enums';
+import { BASE_ROLES, TEACHER_PERMISSIONS } from '../src/core/tenancy/school-template';
 
 const prisma = new PrismaClient({
   adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL! }),
@@ -92,15 +94,6 @@ const PERMISSIONS: Record<string, string> = {
   'finance.report.view': 'View finance reports',
 };
 
-const TEACHER_PERMISSIONS = [
-  'student.record.view',
-  'academic.structure.view',
-  'attendance.register.take',
-  'attendance.report.view',
-  'assessment.create',
-  'assessment.marks.enter',
-];
-
 const EXAM_OFFICER_PERMISSIONS = [
   'student.record.view',
   'academic.structure.view',
@@ -111,13 +104,6 @@ const EXAM_OFFICER_PERMISSIONS = [
   'results.compute',
   'results.reportcard.generate',
   'results.publish',
-];
-
-const BASE_ROLES: { archetype: RoleArchetype; name: string; description: string }[] = [
-  { archetype: 'admin', name: 'Administrator', description: 'Full rights inside this school.' },
-  { archetype: 'staff', name: 'Staff / Teacher', description: 'Registers and mark entry for assigned subjects and sections.' },
-  { archetype: 'parent', name: 'Parent', description: 'Read-only access to linked children.' },
-  { archetype: 'student', name: 'Student', description: 'Read-only access to own published results and attendance.' },
 ];
 
 const SCHOOLS: { slug: string; name: string; type: InstitutionType; adminEmail: string; adminFirst: string; adminLast: string }[] = [
@@ -158,6 +144,24 @@ const DEMO_CLASSES: { name: string; level: number; sections: string[]; coefficie
   { name: 'Upper Sixth', level: 7, sections: ['Science'], coefficients: SIXTH_COEFFICIENTS },
 ];
 
+/** Northfield's demo staff (only missing staff numbers are created). */
+const DEMO_STAFF: {
+  staffNumber: string;
+  firstName: string;
+  lastName: string;
+  position: string;
+  category: 'teaching' | 'non_teaching';
+  hireDate: string;
+}[] = [
+  { staffNumber: 'STF-0001', firstName: 'Brenda', lastName: 'Ngwa', position: 'Mathematics teacher', category: 'teaching', hireDate: '2019-09-02' },
+  { staffNumber: 'STF-0002', firstName: 'Emmanuel', lastName: 'Tabi', position: 'Physics teacher', category: 'teaching', hireDate: '2021-09-06' },
+  { staffNumber: 'STF-0003', firstName: 'Grace', lastName: 'Mbah', position: 'English Language teacher', category: 'teaching', hireDate: '2018-09-03' },
+  { staffNumber: 'STF-0004', firstName: 'Julien', lastName: 'Essomba', position: 'French teacher', category: 'teaching', hireDate: '2022-09-05' },
+  { staffNumber: 'STF-0005', firstName: 'Rita', lastName: 'Fon', position: 'Chemistry teacher', category: 'teaching', hireDate: '2020-09-07' },
+  { staffNumber: 'STF-0006', firstName: 'Peter', lastName: 'Achu', position: 'Bursar', category: 'non_teaching', hireDate: '2017-01-09' },
+  { staffNumber: 'STF-0007', firstName: 'Mercy', lastName: 'Ndi', position: 'Secretary', category: 'non_teaching', hireDate: '2023-02-01' },
+];
+
 const SUPER_ADMIN_EMAIL = process.env.SEED_SUPERADMIN_EMAIL ?? 'superadmin@yese.local';
 
 // --------------------------------------------------------------- helpers
@@ -189,7 +193,7 @@ async function upsertUser(params: {
   return { user, created: true };
 }
 
-async function grant(tenantId: string, roleId: string, codes: string[], permissionIds: Map<string, string>) {
+async function grant(tenantId: string, roleId: string, codes: readonly string[], permissionIds: Map<string, string>) {
   await prisma.rolePermission.createMany({
     data: codes.map((code) => {
       const permissionId = permissionIds.get(code);
@@ -249,6 +253,17 @@ async function seedAcademic(tenantId: string) {
         coefficient,
       })),
       skipDuplicates: true,
+    });
+  }
+}
+
+/** Demo staff records; never overwrites what the school changed. */
+async function seedStaff(tenantId: string) {
+  for (const s of DEMO_STAFF) {
+    await prisma.staffMember.upsert({
+      where: { tenantId_staffNumber: { tenantId, staffNumber: s.staffNumber } },
+      update: {},
+      create: { tenantId, ...s, hireDate: day(s.hireDate) },
     });
   }
 }
@@ -354,7 +369,10 @@ async function main() {
       });
     }
 
-    if (s.slug === 'northfield') await seedAcademic(tenant.id);
+    if (s.slug === 'northfield') {
+      await seedAcademic(tenant.id);
+      await seedStaff(tenant.id);
+    }
   }
 
   // 5. Audit
