@@ -80,6 +80,16 @@ export class ModuleRegistryService {
     return Promise.all(tenants.map((t) => this.schoolView(t)));
   }
 
+  /** Super Admin: one school with its active modules. */
+  async school(tenantId: string): Promise<SchoolModules> {
+    const tenant = await this.prisma.tenant.findUnique({
+      where: { id: tenantId },
+      select: { id: true, slug: true, name: true, type: true, status: true },
+    });
+    if (!tenant) throw new NotFoundException({ code: 'SCHOOL_NOT_FOUND', message: 'No such school.' });
+    return this.schoolView(tenant);
+  }
+
   /**
    * Super Admin switches a module on or off for one school.
    *  - core modules cannot be switched off

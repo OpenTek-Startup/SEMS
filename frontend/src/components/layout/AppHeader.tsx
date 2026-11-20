@@ -20,6 +20,7 @@ type NavItem = {
 const NAV: NavItem[] = [
   { href: "/dashboard", label: "Dashboard", permission: null },
   { href: "/academic", label: "Academic", permission: PERMISSIONS.academicView, module: "academic" },
+  { href: "/staff", label: "Staff", permission: PERMISSIONS.staffView, module: "staff" },
   { href: "/users", label: "Users", permission: PERMISSIONS.userView },
   { href: "/audit", label: "Audit log", permission: PERMISSIONS.auditView },
   { href: "/platform", label: "Schools & modules", permission: "superAdmin" },

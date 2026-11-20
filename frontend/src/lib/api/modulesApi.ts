@@ -30,6 +30,24 @@ export interface PlatformSchool {
   activeModules: string[];
 }
 
+export type InstitutionType = "primary" | "secondary" | "university";
+
+export interface CreateSchoolRequest {
+  name: string;
+  slug: string;
+  type: InstitutionType;
+  adminEmail: string;
+  adminFirstName: string;
+  adminLastName: string;
+}
+
+/** Returned once after creating a school: the first administrator's one-time password. */
+export interface CreatedSchool {
+  school: PlatformSchool;
+  admin: { email: string; firstName: string; lastName: string };
+  temporaryPassword: string;
+}
+
 const modulesBase = baseApi.enhanceEndpoints({ addTagTypes: ["Modules", "Schools"] });
 
 export const modulesApi = modulesBase.injectEndpoints({
@@ -57,6 +75,20 @@ export const modulesApi = modulesBase.injectEndpoints({
       transformResponse: (response: ApiSuccess<PlatformSchool>) => response.data,
       invalidatesTags: ["Schools", "Modules"],
     }),
+    createSchool: build.mutation<CreatedSchool, CreateSchoolRequest>({
+      query: (body) => ({ url: "/platform/schools", method: "POST", body }),
+      transformResponse: (response: ApiSuccess<CreatedSchool>) => response.data,
+      invalidatesTags: ["Schools"],
+    }),
+    setSchoolStatus: build.mutation<PlatformSchool, { schoolId: string; status: "active" | "suspended" }>({
+      query: ({ schoolId, status }) => ({
+        url: `/platform/schools/${schoolId}/status`,
+        method: "PATCH",
+        body: { status },
+      }),
+      transformResponse: (response: ApiSuccess<PlatformSchool>) => response.data,
+      invalidatesTags: ["Schools"],
+    }),
   }),
 });
 
@@ -65,4 +97,6 @@ export const {
   useGetCatalogueQuery,
   useGetPlatformSchoolsQuery,
   useSetSchoolModuleMutation,
+  useCreateSchoolMutation,
+  useSetSchoolStatusMutation,
 } = modulesApi;
