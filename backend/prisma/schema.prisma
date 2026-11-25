@@ -66,6 +66,41 @@ enum StaffCategory {
   @@map("staff_category")
 }
 
+enum Gender {
+  male
+  female
+
+  @@map("gender")
+}
+
+/// inactive: the student has left the school (the record and its history stay).
+enum StudentStatus {
+  active
+  inactive
+
+  @@map("student_status")
+}
+
+/// active: in the section now; transferred: moved to another section; withdrawn: left during the year.
+enum EnrollmentStatus {
+  active
+  transferred
+  withdrawn
+
+  @@map("enrollment_status")
+}
+
+/// Assessment workflow: the teacher enters marks (open) and submits them;
+/// the exam officer validates (or sends back) and then locks.
+enum AssessmentStatus {
+  open
+  submitted
+  validated
+  locked
+
+  @@map("assessment_status")
+}
+
 enum StaffStatus {
   active
   inactive
@@ -100,6 +135,11 @@ model Tenant {
   subjects        Subject[]
   classSubjects   ClassSubject[]
   staffMembers    StaffMember[]
+  teacherAssignments TeacherAssignment[]
+  assessments     Assessment[]
+  students        Student[]
+  enrollments     Enrollment[]
+  marks           Mark[]
 
   @@map("tenants")
 }
@@ -284,8 +324,11 @@ model AcademicYear {
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
-  terms  Term[]
+  tenant             Tenant              @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  terms              Term[]
+  teacherAssignments TeacherAssignment[]
+  assessments        Assessment[]
+  enrollments        Enrollment[]
 
   @@unique([tenantId, name])
   @@index([tenantId])
@@ -305,6 +348,7 @@ model Term {
 
   tenant       Tenant       @relation(fields: [tenantId], references: [id], onDelete: Restrict)
   academicYear AcademicYear @relation(fields: [academicYearId], references: [id], onDelete: Restrict)
+  assessments  Assessment[]
 
   @@unique([academicYearId, name])
   @@index([tenantId])
@@ -339,8 +383,11 @@ model Section {
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  tenant      Tenant      @relation(fields: [tenantId], references: [id], onDelete: Restrict)
-  schoolClass SchoolClass @relation(fields: [classId], references: [id], onDelete: Restrict)
+  tenant             Tenant              @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  schoolClass        SchoolClass         @relation(fields: [classId], references: [id], onDelete: Restrict)
+  teacherAssignments TeacherAssignment[]
+  assessments        Assessment[]
+  enrollments        Enrollment[]
 
   @@unique([classId, name])
   @@index([tenantId])
@@ -356,8 +403,10 @@ model Subject {
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  tenant  Tenant         @relation(fields: [tenantId], references: [id], onDelete: Restrict)
-  classes ClassSubject[]
+  tenant             Tenant              @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  classes            ClassSubject[]
+  teacherAssignments TeacherAssignment[]
+  assessments        Assessment[]
 
   @@unique([tenantId, code])
   @@unique([tenantId, name])
@@ -408,12 +457,159 @@ model StaffMember {
   createdAt   DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt   DateTime      @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
-  user   User?  @relation(fields: [userId], references: [id], onDelete: SetNull)
+  tenant      Tenant              @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  user        User?               @relation(fields: [userId], references: [id], onDelete: SetNull)
+  assignments TeacherAssignment[]
 
   @@unique([tenantId, staffNumber])
   @@index([tenantId])
   @@map("staff_members")
+}
+
+// ------------------------------------------------------- teaching
+// Teacher assignment (Phase 2): who teaches which subject to which section
+// in a school year. Needs the Academic and Staff modules. Attendance and
+// Assessment use it so teachers only see their own classes.
+
+/// "In 2026-2027, Ngwa Brenda teaches Mathematics to Form 1 A". One teacher per subject per section per year.
+model TeacherAssignment {
+  id             String   @id @default(uuid()) @db.Uuid
+  tenantId       String   @map("tenant_id") @db.Uuid
+  academicYearId String   @map("academic_year_id") @db.Uuid
+  sectionId      String   @map("section_id") @db.Uuid
+  subjectId      String   @map("subject_id") @db.Uuid
+  staffMemberId  String   @map("staff_member_id") @db.Uuid
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant       Tenant       @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  academicYear AcademicYear @relation(fields: [academicYearId], references: [id], onDelete: Restrict)
+  section      Section      @relation(fields: [sectionId], references: [id], onDelete: Restrict)
+  subject      Subject      @relation(fields: [subjectId], references: [id], onDelete: Restrict)
+  staffMember  StaffMember  @relation(fields: [staffMemberId], references: [id], onDelete: Restrict)
+
+  @@unique([academicYearId, sectionId, subjectId])
+  @@index([tenantId])
+  @@index([staffMemberId])
+  @@index([sectionId])
+  @@map("teacher_assignments")
+}
+
+// ------------------------------------------------------- students
+// Students (Phase 2) and their enrollment in a section for a school year.
+// A student has at most one active enrollment per year; a transfer closes
+// the old row (transferred) and opens a new one, so marks and registers
+// keep pointing at the section the student was in.
+
+/// A student of the school. The guardian is the first contact (parent accounts come later).
+model Student {
+  id                   String        @id @default(uuid()) @db.Uuid
+  tenantId             String        @map("tenant_id") @db.Uuid
+  matricule            String
+  firstName            String        @map("first_name")
+  lastName             String        @map("last_name")
+  gender               Gender
+  dateOfBirth          DateTime?     @map("date_of_birth") @db.Date
+  placeOfBirth         String?       @map("place_of_birth")
+  guardianName         String?       @map("guardian_name")
+  guardianPhone        String?       @map("guardian_phone")
+  guardianRelationship String?       @map("guardian_relationship")
+  status               StudentStatus @default(active)
+  admittedOn           DateTime?     @map("admitted_on") @db.Date
+  createdAt            DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt            DateTime      @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant      Tenant       @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  enrollments Enrollment[]
+  marks       Mark[]
+
+  @@unique([tenantId, matricule])
+  @@index([tenantId])
+  @@map("students")
+}
+
+/// "Abena Ada is in Form 1 A for 2026-2027, since 7 Sep 2026".
+model Enrollment {
+  id             String           @id @default(uuid()) @db.Uuid
+  tenantId       String           @map("tenant_id") @db.Uuid
+  academicYearId String           @map("academic_year_id") @db.Uuid
+  studentId      String           @map("student_id") @db.Uuid
+  sectionId      String           @map("section_id") @db.Uuid
+  status         EnrollmentStatus @default(active)
+  enrolledOn     DateTime         @map("enrolled_on") @db.Date
+  leftOn         DateTime?        @map("left_on") @db.Date
+  reason         String?
+  createdAt      DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime         @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant       Tenant       @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  academicYear AcademicYear @relation(fields: [academicYearId], references: [id], onDelete: Restrict)
+  student      Student      @relation(fields: [studentId], references: [id], onDelete: Restrict)
+  section      Section      @relation(fields: [sectionId], references: [id], onDelete: Restrict)
+
+  @@index([tenantId])
+  @@index([academicYearId, sectionId])
+  @@index([studentId])
+  @@map("enrollments")
+}
+
+// ----------------------------------------------------- assessment
+// Assessment (Phase 3): tests, sequences and exams of one subject in one
+// section, in one term. Marks are added once Enrollment provides the
+// students of each section.
+
+/// "Sequence 1" in Mathematics, Form 1 A, First Term: marked out of maxScore, counted weight times in the term average.
+model Assessment {
+  id             String           @id @default(uuid()) @db.Uuid
+  tenantId       String           @map("tenant_id") @db.Uuid
+  academicYearId String           @map("academic_year_id") @db.Uuid
+  termId         String           @map("term_id") @db.Uuid
+  sectionId      String           @map("section_id") @db.Uuid
+  subjectId      String           @map("subject_id") @db.Uuid
+  name           String
+  maxScore       Int              @default(20) @map("max_score")
+  weight         Int              @default(1)
+  heldOn         DateTime?        @map("held_on") @db.Date
+  status         AssessmentStatus @default(open)
+  submittedAt    DateTime?        @map("submitted_at") @db.Timestamptz(3)
+  validatedAt    DateTime?        @map("validated_at") @db.Timestamptz(3)
+  lockedAt       DateTime?        @map("locked_at") @db.Timestamptz(3)
+  createdAt      DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime         @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant       Tenant       @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  academicYear AcademicYear @relation(fields: [academicYearId], references: [id], onDelete: Restrict)
+  term         Term         @relation(fields: [termId], references: [id], onDelete: Restrict)
+  section      Section      @relation(fields: [sectionId], references: [id], onDelete: Restrict)
+  subject      Subject      @relation(fields: [subjectId], references: [id], onDelete: Restrict)
+  marks        Mark[]
+
+  @@unique([termId, sectionId, subjectId, name])
+  @@index([tenantId])
+  @@index([sectionId])
+  @@index([academicYearId])
+  @@map("assessments")
+}
+
+/// One student's mark in one assessment: a score (0 to maxScore, 2 decimals) or absent.
+model Mark {
+  id           String   @id @default(uuid()) @db.Uuid
+  tenantId     String   @map("tenant_id") @db.Uuid
+  assessmentId String   @map("assessment_id") @db.Uuid
+  studentId    String   @map("student_id") @db.Uuid
+  score        Decimal? @db.Decimal(5, 2)
+  absent       Boolean  @default(false)
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt    DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant     Tenant     @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  assessment Assessment @relation(fields: [assessmentId], references: [id], onDelete: Restrict)
+  student    Student    @relation(fields: [studentId], references: [id], onDelete: Restrict)
+
+  @@unique([assessmentId, studentId])
+  @@index([tenantId])
+  @@index([studentId])
+  @@map("marks")
 }
 
 // ---------------------------------------------------------------- audit

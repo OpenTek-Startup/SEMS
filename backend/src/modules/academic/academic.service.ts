@@ -191,6 +191,15 @@ export class AcademicService {
     if ((await this.db.term.count({ where: { academicYearId: id } })) > 0) {
       throw fail(409, { code: 'YEAR_NOT_EMPTY', message: 'Delete the terms of this year first.' });
     }
+    if ((await this.db.teacherAssignment.count({ where: { academicYearId: id } })) > 0) {
+      throw fail(409, {
+        code: 'YEAR_HAS_ASSIGNMENTS',
+        message: 'Teachers are assigned to classes in this year. Remove the assignments first.',
+      });
+    }
+    if ((await this.db.enrollment.count({ where: { academicYearId: id } })) > 0) {
+      throw fail(409, { code: 'YEAR_HAS_ENROLLMENTS', message: 'Students are enrolled in this year. It cannot be deleted.' });
+    }
     await this.db.academicYear.delete({ where: { id } });
     await this.log(actor, 'academic.year.deleted', 'academic_year', id, { name: year.name }, ip);
     return { id, deleted: true };
@@ -231,6 +240,12 @@ export class AcademicService {
   async deleteTerm(actor: AuthContext, id: string, ip: string | null): Promise<YearView> {
     this.requireSchool();
     const term = await this.findTerm(id);
+    if ((await this.db.assessment.count({ where: { termId: id } })) > 0) {
+      throw fail(409, {
+        code: 'TERM_HAS_ASSESSMENTS',
+        message: `${term.name} already has assessments. It cannot be deleted.`,
+      });
+    }
     await this.db.term.delete({ where: { id } });
     await this.log(actor, 'academic.term.deleted', 'term', id, { name: term.name }, ip);
     return this.yearView(term.academicYearId);
@@ -342,6 +357,24 @@ export class AcademicService {
     this.requireSchool();
     const section = await this.findSection(id);
     const schoolClass = await this.findClass(section.classId);
+    if ((await this.db.teacherAssignment.count({ where: { sectionId: id } })) > 0) {
+      throw fail(409, {
+        code: 'SECTION_HAS_ASSIGNMENTS',
+        message: `Teachers are assigned to ${schoolClass.name} ${section.name}. Remove the assignments first.`,
+      });
+    }
+    if ((await this.db.assessment.count({ where: { sectionId: id } })) > 0) {
+      throw fail(409, {
+        code: 'SECTION_HAS_ASSESSMENTS',
+        message: `${schoolClass.name} ${section.name} already has assessments. It cannot be deleted.`,
+      });
+    }
+    if ((await this.db.enrollment.count({ where: { sectionId: id } })) > 0) {
+      throw fail(409, {
+        code: 'SECTION_HAS_STUDENTS',
+        message: `Students are or were enrolled in ${schoolClass.name} ${section.name}. It cannot be deleted.`,
+      });
+    }
     await this.db.section.delete({ where: { id } });
     await this.log(actor, 'academic.section.deleted', 'section', id, { name: `${schoolClass.name} ${section.name}` }, ip);
     return this.classView(section.classId);
@@ -361,6 +394,8 @@ export class AcademicService {
         throw fail(400, { code: 'UNKNOWN_SUBJECT', message: 'One or more subjects do not exist in your school.' });
       }
     }
+    await this.assertNoTeachersOnRemoved(classId, ids);
+    await this.assertNoAssessmentsOnRemoved(classId, ids);
 
     await this.db.$transaction(async (tx) => {
       await tx.classSubject.deleteMany({ where: { classId } });
@@ -441,6 +476,44 @@ export class AcademicService {
   }
 
   // ============================================================= helpers
+
+  /** A subject cannot leave a class once it has assessments there. */
+  private async assertNoAssessmentsOnRemoved(classId: string, keptSubjectIds: readonly string[]): Promise<void> {
+    const sections = await this.db.section.findMany({ where: { classId }, select: { id: true } });
+    if (sections.length === 0) return;
+    const used = await this.db.assessment.findMany({
+      where: { sectionId: { in: sections.map((s) => s.id) }, subjectId: { notIn: [...keptSubjectIds] } },
+      select: { subjectId: true },
+    });
+    if (used.length === 0) return;
+    const subjects = await this.db.subject.findMany({
+      where: { id: { in: [...new Set(used.map((u) => u.subjectId))] } },
+      select: { name: true },
+    });
+    throw fail(409, {
+      code: 'SUBJECT_HAS_ASSESSMENTS',
+      message: `${subjects.map((x) => x.name).join(', ')} already has assessments in this class. It cannot be removed.`,
+    });
+  }
+
+  /** A subject cannot leave a class while a teacher is assigned to teach it there. */
+  private async assertNoTeachersOnRemoved(classId: string, keptSubjectIds: readonly string[]): Promise<void> {
+    const sections = await this.db.section.findMany({ where: { classId }, select: { id: true } });
+    if (sections.length === 0) return;
+    const busy = await this.db.teacherAssignment.findMany({
+      where: { sectionId: { in: sections.map((s) => s.id) }, subjectId: { notIn: [...keptSubjectIds] } },
+      select: { subjectId: true },
+    });
+    if (busy.length === 0) return;
+    const subjects = await this.db.subject.findMany({
+      where: { id: { in: [...new Set(busy.map((b) => b.subjectId))] } },
+      select: { name: true },
+    });
+    throw fail(409, {
+      code: 'SUBJECT_HAS_TEACHERS',
+      message: `Teachers are assigned to ${subjects.map((x) => x.name).join(', ')} in this class. Remove those assignments first.`,
+    });
+  }
 
   private async yearView(id: string): Promise<YearView> {
     const year = await this.findYear(id);

@@ -12,8 +12,19 @@ export const PERMISSIONS = {
   auditView: "core.audit.view",
   academicView: "academic.structure.view",
   academicManage: "academic.structure.manage",
+  teacherAssign: "academic.teacher.assign",
   staffView: "staff.record.view",
   staffEdit: "staff.record.edit",
+  studentView: "student.record.view",
+  studentEdit: "student.record.edit",
+  enroll: "enrollment.enroll",
+  withdraw: "enrollment.withdraw",
+  assessmentCreate: "assessment.create",
+  marksEnter: "assessment.marks.enter",
+  marksValidate: "assessment.marks.validate",
+  marksLock: "assessment.marks.lock",
+  marksOverride: "assessment.marks.override",
+  resultsCompute: "results.compute",
 } as const;
 
 /** True when the user holds every listed permission. */

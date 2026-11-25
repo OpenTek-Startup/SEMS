@@ -13,6 +13,11 @@ import { AuditViewerModule } from './modules/audit/audit-viewer.module';
 import { PlatformModule } from './modules/platform/platform.module';
 import { AcademicModule } from './modules/academic/academic.module';
 import { StaffModule } from './modules/staff/staff.module';
+import { TeachingModule } from './modules/teaching/teaching.module';
+import { AssessmentModule } from './modules/assessment/assessment.module';
+import { StudentModule } from './modules/students/student.module';
+import { EnrollmentModule } from './modules/enrollment/enrollment.module';
+import { ResultsModule } from './modules/results/results.module';
 
 @Module({
   imports: [
@@ -39,6 +44,11 @@ import { StaffModule } from './modules/staff/staff.module';
     // School core (Phase 2)
     AcademicModule,
     StaffModule,
+    StudentModule,
+    EnrollmentModule,
+    TeachingModule,
+    AssessmentModule,
+    ResultsModule,
   ],
 })
 export class AppModule {}

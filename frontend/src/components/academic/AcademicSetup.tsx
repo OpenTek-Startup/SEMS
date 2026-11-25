@@ -8,6 +8,7 @@ import { useAppSelector } from "@/store/hooks";
 import AppHeader from "@/components/layout/AppHeader";
 import ClassesPanel from "./ClassesPanel";
 import SubjectsPanel from "./SubjectsPanel";
+import TeachersPanel from "./TeachersPanel";
 import YearsPanel from "./YearsPanel";
 import { formatDay } from "./academicUi";
 
@@ -15,6 +16,7 @@ const TABS = [
   { id: "years", label: "Years & terms" },
   { id: "classes", label: "Classes & sections" },
   { id: "subjects", label: "Subjects" },
+  { id: "teachers", label: "Teachers" },
 ] as const;
 
 type TabId = (typeof TABS)[number]["id"];
@@ -22,12 +24,15 @@ type TabId = (typeof TABS)[number]["id"];
 /**
  * /academic — the school's academic structure (module "academic").
  * Reading needs academic.structure.view; the forms and buttons appear only
- * with academic.structure.manage. The backend checks both anyway.
+ * with academic.structure.manage. The Teachers tab (needs the Staff module
+ * too) lets academic.teacher.assign holders pick who teaches what.
+ * The backend checks all of this anyway.
  */
 export default function AcademicSetup() {
   const school = useAppSelector((state) => state.auth.user?.school);
   const canView = useCan(PERMISSIONS.academicView);
   const canManage = useCan(PERMISSIONS.academicManage);
+  const canAssign = useCan(PERMISSIONS.teacherAssign);
   const modules = useActiveModules();
   const active = modules.codes.has("academic");
   const current = useGetCurrentPeriodQuery(undefined, { skip: !canView || !active });
@@ -86,6 +91,7 @@ export default function AcademicSetup() {
               {tab === "years" && <YearsPanel canManage={canManage} />}
               {tab === "classes" && <ClassesPanel canManage={canManage} />}
               {tab === "subjects" && <SubjectsPanel canManage={canManage} />}
+              {tab === "teachers" && <TeachersPanel canAssign={canAssign} staffActive={modules.codes.has("staff")} />}
             </div>
           </>
         )}
