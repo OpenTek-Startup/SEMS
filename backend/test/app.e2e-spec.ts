@@ -1431,5 +1431,993 @@ describe('YESE API (e2e)', () => {
         await post(auth, '/years', { name: '2026-2027' }).expect(400);
       });
     });
+
+    describe('teacher assignment (Phase 2)', () => {
+      const ASSIGN = [
+        'academic.structure.manage',
+        'academic.structure.view',
+        'academic.teacher.assign',
+        'staff.record.edit',
+        'staff.record.view',
+      ];
+      const OTHER_ID = '99999999-9999-4999-8999-999999999999';
+
+      async function as(email: string, school = 'northfield') {
+        const { token } = await signIn(email, school);
+        return { 'X-Tenant': school, Authorization: `Bearer ${token}` };
+      }
+      const admin = () => as('admin@northfield.school');
+      const api = (auth: Record<string, string>) => ({
+        get: (url: string) => http().get(`/api${url}`).set(auth),
+        post: (url: string, body: object) => http().post(`/api${url}`).set(auth).send(body),
+        put: (url: string, body: object) => http().put(`/api${url}`).set(auth).send(body),
+        patch: (url: string, body: object) => http().patch(`/api${url}`).set(auth).send(body),
+        del: (url: string) => http().delete(`/api${url}`).set(auth),
+      });
+      const assign = (auth: Record<string, string>, body: object) => api(auth).put('/teaching/assignments', body);
+
+      /** Northfield: 2026-2027 (current), Form 1 A/B with MATH and ENG, Form 2 A with MATH; three staff. */
+      async function school(auth: Record<string, string>) {
+        const a = api(auth);
+        const year = (await a.post('/academic/years', { name: '2026-2027', startDate: '2026-09-07', endDate: '2027-06-30' }).expect(201)).body.data;
+        const math = (await a.post('/academic/subjects', { code: 'MATH', name: 'Mathematics' }).expect(201)).body.data;
+        const eng = (await a.post('/academic/subjects', { code: 'ENG', name: 'English' }).expect(201)).body.data;
+        const form1 = (await a.post('/academic/classes', { name: 'Form 1', level: 1 }).expect(201)).body.data;
+        await a.post(`/academic/classes/${form1.id}/sections`, { name: 'A' }).expect(201);
+        const f1 = (await a.post(`/academic/classes/${form1.id}/sections`, { name: 'B' }).expect(201)).body.data;
+        await a
+          .put(`/academic/classes/${form1.id}/subjects`, {
+            subjects: [
+              { subjectId: math.id, coefficient: 5 },
+              { subjectId: eng.id, coefficient: 4 },
+            ],
+          })
+          .expect(200);
+        const form2 = (await a.post('/academic/classes', { name: 'Form 2', level: 2 }).expect(201)).body.data;
+        const f2 = (await a.post(`/academic/classes/${form2.id}/sections`, { name: 'A' }).expect(201)).body.data;
+        await a.put(`/academic/classes/${form2.id}/subjects`, { subjects: [{ subjectId: math.id, coefficient: 5 }] }).expect(200);
+
+        const brenda = (await a.post('/staff', { firstName: 'Brenda', lastName: 'Ngwa', position: 'Mathematics teacher' }).expect(201)).body.data;
+        const grace = (await a.post('/staff', { firstName: 'Grace', lastName: 'Mbah', position: 'English teacher' }).expect(201)).body.data;
+        const peter = (await a.post('/staff', { firstName: 'Peter', lastName: 'Achu', position: 'Bursar', category: 'non_teaching' }).expect(201)).body.data;
+        const [f1a, f1b] = f1.sections;
+        return { year, math, eng, form1, form2, f1a, f1b, f2a: f2.sections[0], brenda, grace, peter };
+      }
+
+      beforeEach(() => {
+        fakeDb.modules.push({ code: 'staff', name: 'Staff', category: 'business', dependsOn: [] });
+        fakeDb.activate(NORTHFIELD.id, ['staff']);
+        app.get(ModuleRegistryService).invalidateAll();
+        // The administrator sets up the school and assigns teachers; the teacher reads.
+        for (const role of fakeDb.roles) {
+          if (role.archetype === 'admin') role.permissions = [...ADMIN_PERMISSIONS, ...ASSIGN];
+          if (role.id === ROLE_TEACHER) role.permissions = [...role.permissions, 'academic.structure.view'];
+        }
+      });
+
+      it('needs the Academic and Staff modules and the assign permission', async () => {
+        await http().get('/api/teaching/assignments').set('X-Tenant', 'northfield').expect(401);
+
+        const sunrise = await as('admin@sunrise.school', 'sunrise');
+        expect((await api(sunrise).get('/teaching/assignments').expect(403)).body.error.code).toBe('MODULE_INACTIVE');
+
+        const teacher = api(await as('teacher@northfield.school'));
+        const empty = (await teacher.get('/teaching/assignments').expect(200)).body.data;
+        expect(empty).toEqual({ year: null, sections: [], total: 0, assigned: 0 });
+        expect((await teacher.get('/teaching/teachers').expect(403)).body.error.code).toBe('PERMISSION_DENIED');
+        const body = { sectionId: OTHER_ID, subjectId: OTHER_ID, staffMemberId: null };
+        expect((await assign(await as('teacher@northfield.school'), body).expect(403)).body.error.code).toBe('PERMISSION_DENIED');
+      });
+
+      it('assigns, changes and removes a teacher, with an audit entry each time', async () => {
+        const auth = await admin();
+        const s = await school(auth);
+
+        const set = await assign(auth, { sectionId: s.f1a.id, subjectId: s.math.id, staffMemberId: s.brenda.id }).expect(200);
+        expect(set.body.data).toEqual({
+          yearId: s.year.id,
+          sectionId: s.f1a.id,
+          subjectId: s.math.id,
+          teacher: { id: s.brenda.id, staffNumber: s.brenda.staffNumber, fullName: 'Ngwa Brenda', active: true },
+        });
+        await assign(auth, { sectionId: s.f2a.id, subjectId: s.math.id, staffMemberId: s.brenda.id }).expect(200);
+        await assign(auth, { sectionId: s.f1a.id, subjectId: s.eng.id, staffMemberId: s.brenda.id }).expect(200);
+        // Same teacher again: nothing changes, nothing logged.
+        await assign(auth, { sectionId: s.f1a.id, subjectId: s.eng.id, staffMemberId: s.brenda.id }).expect(200);
+        await assign(auth, { sectionId: s.f1a.id, subjectId: s.eng.id, staffMemberId: s.grace.id }).expect(200);
+        expect(fakeDb.teacherAssignments.rows).toHaveLength(3);
+
+        const grid = (await api(auth).get('/teaching/assignments').expect(200)).body.data;
+        expect(grid.year).toEqual({ id: s.year.id, name: '2026-2027' });
+        expect(grid.sections.map((x: { label: string }) => x.label)).toEqual(['Form 1 A', 'Form 1 B', 'Form 2 A']);
+        expect(grid.sections[0].cells.map((c: any) => [c.code, c.teacher?.fullName ?? null])).toEqual([
+          ['ENG', 'Mbah Grace'],
+          ['MATH', 'Ngwa Brenda'],
+        ]);
+        expect(grid).toMatchObject({ total: 5, assigned: 3 });
+
+        const teachers = (await api(auth).get('/teaching/teachers').expect(200)).body.data;
+        expect(teachers.map((t: any) => [t.fullName, t.load])).toEqual([
+          ['Mbah Grace', 1],
+          ['Ngwa Brenda', 2],
+        ]);
+
+        await assign(auth, { sectionId: s.f1a.id, subjectId: s.eng.id, staffMemberId: null }).expect(200);
+        await assign(auth, { sectionId: s.f1b.id, subjectId: s.eng.id, staffMemberId: null }).expect(200);
+        expect(fakeDb.teacherAssignments.rows).toHaveLength(2);
+
+        const log = fakeDb.audit.filter((a) => a.action.startsWith('teaching.'));
+        expect(log.map((a) => a.action)).toEqual([
+          'teaching.assignment.created',
+          'teaching.assignment.created',
+          'teaching.assignment.created',
+          'teaching.assignment.changed',
+          'teaching.assignment.removed',
+        ]);
+        expect(log[0]).toMatchObject({
+          tenantId: NORTHFIELD.id,
+          entity: 'teacher_assignment',
+          detail: { year: '2026-2027', section: 'Form 1 A', subject: 'MATH', teacher: 'Ngwa Brenda' },
+        });
+        expect(log[3].detail).toMatchObject({ previousStaffMemberId: s.brenda.id, staffMemberId: s.grace.id });
+      });
+
+      it('refuses staff who cannot teach and subjects the class does not have', async () => {
+        const auth = await admin();
+        const s = await school(auth);
+        const cell = { sectionId: s.f2a.id, subjectId: s.math.id };
+
+        expect((await assign(auth, { ...cell, staffMemberId: s.peter.id }).expect(400)).body.error.code).toBe('STAFF_NOT_TEACHING');
+        await api(auth).patch(`/staff/${s.grace.id}/status`, { status: 'inactive' }).expect(200);
+        expect((await assign(auth, { ...cell, staffMemberId: s.grace.id }).expect(400)).body.error.code).toBe('STAFF_INACTIVE');
+        const notTaught = await assign(auth, { sectionId: s.f2a.id, subjectId: s.eng.id, staffMemberId: s.brenda.id }).expect(400);
+        expect(notTaught.body.error.code).toBe('SUBJECT_NOT_IN_CLASS');
+
+        expect((await assign(auth, { ...cell, staffMemberId: OTHER_ID }).expect(404)).body.error.code).toBe('STAFF_NOT_FOUND');
+        expect((await assign(auth, { ...cell, sectionId: OTHER_ID, staffMemberId: s.brenda.id }).expect(404)).body.error.code).toBe('SECTION_NOT_FOUND');
+        expect((await assign(auth, { ...cell, yearId: OTHER_ID, staffMemberId: s.brenda.id }).expect(404)).body.error.code).toBe('YEAR_NOT_FOUND');
+        expect((await api(auth).get(`/teaching/assignments?yearId=${OTHER_ID}`).expect(404)).body.error.code).toBe('YEAR_NOT_FOUND');
+
+        await assign(auth, { ...cell }).expect(400);
+        await assign(auth, { ...cell, staffMemberId: 'not-an-id' }).expect(400);
+        await assign(auth, { ...cell, staffMemberId: s.brenda.id, tenantId: SUNRISE.id }).expect(400);
+        expect(fakeDb.teacherAssignments.rows).toHaveLength(0);
+
+        // Only active teaching staff are offered.
+        const teachers = (await api(auth).get('/teaching/teachers').expect(200)).body.data;
+        expect(teachers.map((t: any) => t.fullName)).toEqual(['Ngwa Brenda']);
+      });
+
+      it('needs a year: the current one, or one chosen', async () => {
+        const auth = await admin();
+        const s = await school(auth);
+        const next = (await api(auth).post('/academic/years', { name: '2027-2028', startDate: '2027-09-06', endDate: '2028-06-30' }).expect(201)).body.data;
+        await assign(auth, { yearId: next.id, sectionId: s.f1a.id, subjectId: s.math.id, staffMemberId: s.brenda.id }).expect(200);
+
+        const current = (await api(auth).get('/teaching/assignments').expect(200)).body.data;
+        expect(current.assigned).toBe(0);
+        const planned = (await api(auth).get(`/teaching/assignments?yearId=${next.id}`).expect(200)).body.data;
+        expect(planned).toMatchObject({ year: { name: '2027-2028' }, assigned: 1 });
+
+        // No current year: a write without a year is refused.
+        for (const y of fakeDb.academicYears.rows) y.isCurrent = false;
+        const none = await assign(auth, { sectionId: s.f1a.id, subjectId: s.math.id, staffMemberId: s.brenda.id }).expect(400);
+        expect(none.body.error.code).toBe('YEAR_REQUIRED');
+      });
+
+      it('keeps the academic structure from losing assigned classes', async () => {
+        const auth = await admin();
+        const a = api(auth);
+        const s = await school(auth);
+        await assign(auth, { sectionId: s.f1b.id, subjectId: s.eng.id, staffMemberId: s.grace.id }).expect(200);
+
+        expect((await a.del(`/academic/sections/${s.f1b.id}`).expect(409)).body.error.code).toBe('SECTION_HAS_ASSIGNMENTS');
+        const dropEng = await a.put(`/academic/classes/${s.form1.id}/subjects`, { subjects: [{ subjectId: s.math.id, coefficient: 5 }] }).expect(409);
+        expect(dropEng.body.error).toMatchObject({ code: 'SUBJECT_HAS_TEACHERS', message: expect.stringContaining('English') });
+        // Changing a coefficient while keeping the subject is fine.
+        await a
+          .put(`/academic/classes/${s.form1.id}/subjects`, {
+            subjects: [
+              { subjectId: s.math.id, coefficient: 6 },
+              { subjectId: s.eng.id, coefficient: 3 },
+            ],
+          })
+          .expect(200);
+
+        const next = (await a.post('/academic/years', { name: '2027-2028', startDate: '2027-09-06', endDate: '2028-06-30' }).expect(201)).body.data;
+        await assign(auth, { yearId: next.id, sectionId: s.f2a.id, subjectId: s.math.id, staffMemberId: s.brenda.id }).expect(200);
+        expect((await a.del(`/academic/years/${next.id}`).expect(409)).body.error.code).toBe('YEAR_HAS_ASSIGNMENTS');
+
+        await assign(auth, { yearId: next.id, sectionId: s.f2a.id, subjectId: s.math.id, staffMemberId: null }).expect(200);
+        await a.del(`/academic/years/${next.id}`).expect(200);
+        await assign(auth, { sectionId: s.f1b.id, subjectId: s.eng.id, staffMemberId: null }).expect(200);
+        await a.del(`/academic/sections/${s.f1b.id}`).expect(200);
+      });
+
+      it('shows a teacher their own classes through their linked staff record', async () => {
+        const auth = await admin();
+        const s = await school(auth);
+        await assign(auth, { sectionId: s.f2a.id, subjectId: s.math.id, staffMemberId: s.brenda.id }).expect(200);
+        await assign(auth, { sectionId: s.f1a.id, subjectId: s.math.id, staffMemberId: s.brenda.id }).expect(200);
+        await assign(auth, { sectionId: s.f1a.id, subjectId: s.eng.id, staffMemberId: s.grace.id }).expect(200);
+
+        const teacher = api(await as('teacher@northfield.school'));
+        const unlinked = (await teacher.get('/teaching/mine').expect(200)).body.data;
+        expect(unlinked).toMatchObject({ year: { name: '2026-2027' }, staff: null, classes: [] });
+
+        const userId = fakeDb.users.find((u) => u.email === 'teacher@northfield.school')!.id;
+        await api(auth).put(`/staff/${s.brenda.id}/account`, { userId }).expect(200);
+        const mine = (await teacher.get('/teaching/mine').expect(200)).body.data;
+        expect(mine.staff).toMatchObject({ fullName: 'Ngwa Brenda' });
+        expect(mine.classes.map((c: any) => `${c.label} ${c.code}`)).toEqual(['Form 1 A MATH', 'Form 2 A MATH']);
+      });
+
+      it('keeps assignments inside their school', async () => {
+        const north = await admin();
+        const s = await school(north);
+        await assign(north, { sectionId: s.f1a.id, subjectId: s.math.id, staffMemberId: s.brenda.id }).expect(200);
+
+        fakeDb.activate(SUNRISE.id, ['academic', 'staff']);
+        app.get(ModuleRegistryService).invalidateAll();
+        const sunrise = await as('admin@sunrise.school', 'sunrise');
+        expect((await api(sunrise).get('/teaching/assignments').expect(200)).body.data.sections).toEqual([]);
+        const foreign = await assign(sunrise, { sectionId: s.f1a.id, subjectId: s.math.id, staffMemberId: null }).expect(400);
+        expect(foreign.body.error.code).toBe('YEAR_REQUIRED');
+        const sy = (await api(sunrise).post('/academic/years', { name: '2026-2027', startDate: '2026-09-07', endDate: '2027-06-30' }).expect(201)).body.data;
+        const away = await assign(sunrise, { yearId: sy.id, sectionId: s.f1a.id, subjectId: s.math.id, staffMemberId: null }).expect(404);
+        expect(away.body.error.code).toBe('SECTION_NOT_FOUND');
+        expect(fakeDb.teacherAssignments.rows.every((r) => r.tenantId === NORTHFIELD.id)).toBe(true);
+      });
+    });
+
+    describe('assessments (Phase 3)', () => {
+      const ADMIN_EXTRA = [
+        'academic.structure.manage',
+        'academic.structure.view',
+        'academic.teacher.assign',
+        'staff.record.edit',
+        'staff.record.view',
+        'assessment.create',
+        'assessment.marks.enter',
+        'assessment.marks.validate',
+        'assessment.marks.lock',
+      ];
+      const ROLE_EXAM_OFFICER = 'a0000000-0000-4000-8000-000000000004';
+      const OTHER_ID = '99999999-9999-4999-8999-999999999999';
+
+      async function as(email: string, school = 'northfield') {
+        const { token } = await signIn(email, school);
+        return { 'X-Tenant': school, Authorization: `Bearer ${token}` };
+      }
+      const admin = () => as('admin@northfield.school');
+      const api = (auth: Record<string, string>) => ({
+        get: (url: string) => http().get(`/api${url}`).set(auth),
+        post: (url: string, body: object = {}) => http().post(`/api${url}`).set(auth).send(body),
+        put: (url: string, body: object) => http().put(`/api${url}`).set(auth).send(body),
+        patch: (url: string, body: object) => http().patch(`/api${url}`).set(auth).send(body),
+        del: (url: string) => http().delete(`/api${url}`).set(auth),
+      });
+
+      /**
+       * Northfield 2026-2027 with two terms; Form 1 A and B study MATH and ENG.
+       * The teacher's account is linked to Ngwa Brenda, who teaches MATH in Form 1 A.
+       */
+      async function school() {
+        const a = api(await admin());
+        const year = (await a.post('/academic/years', { name: '2026-2027', startDate: '2026-09-07', endDate: '2027-06-30' }).expect(201)).body.data;
+        const first = (await a.post(`/academic/years/${year.id}/terms`, { name: 'First Term', startDate: '2026-09-07', endDate: '2026-12-11' }).expect(201)).body.data;
+        const second = (await a.post(`/academic/years/${year.id}/terms`, { name: 'Second Term', startDate: '2027-01-04', endDate: '2027-03-26' }).expect(201)).body.data;
+        const term1 = first.terms.find((t: any) => t.name === 'First Term');
+        const term2 = second.terms.find((t: any) => t.name === 'Second Term');
+        const math = (await a.post('/academic/subjects', { code: 'MATH', name: 'Mathematics' }).expect(201)).body.data;
+        const eng = (await a.post('/academic/subjects', { code: 'ENG', name: 'English' }).expect(201)).body.data;
+        const form1 = (await a.post('/academic/classes', { name: 'Form 1', level: 1 }).expect(201)).body.data;
+        await a.post(`/academic/classes/${form1.id}/sections`, { name: 'A' }).expect(201);
+        const withB = (await a.post(`/academic/classes/${form1.id}/sections`, { name: 'B' }).expect(201)).body.data;
+        await a
+          .put(`/academic/classes/${form1.id}/subjects`, {
+            subjects: [
+              { subjectId: math.id, coefficient: 5 },
+              { subjectId: eng.id, coefficient: 4 },
+            ],
+          })
+          .expect(200);
+        const other = (await a.post('/academic/subjects', { code: 'HIST', name: 'History' }).expect(201)).body.data;
+        const brenda = (await a.post('/staff', { firstName: 'Brenda', lastName: 'Ngwa', position: 'Mathematics teacher' }).expect(201)).body.data;
+        const userId = fakeDb.users.find((u) => u.email === 'teacher@northfield.school')!.id;
+        await a.put(`/staff/${brenda.id}/account`, { userId }).expect(200);
+        const [f1a, f1b] = withB.sections;
+        await a.put('/teaching/assignments', { sectionId: f1a.id, subjectId: math.id, staffMemberId: brenda.id }).expect(200);
+        return { year, term1, term2, math, eng, other, form1, f1a, f1b };
+      }
+
+      const seq1 = (s: Awaited<ReturnType<typeof school>>, over: object = {}) => ({
+        termId: s.term1.id,
+        sectionId: s.f1a.id,
+        subjectId: s.math.id,
+        name: ' Sequence   1 ',
+        heldOn: '2026-10-12',
+        ...over,
+      });
+
+      beforeEach(() => {
+        fakeDb.modules.push({ code: 'staff', name: 'Staff', category: 'business', dependsOn: [] });
+        fakeDb.activate(NORTHFIELD.id, ['staff', 'enrollment', 'assessment']);
+        app.get(ModuleRegistryService).invalidateAll();
+        for (const role of fakeDb.roles) {
+          if (role.archetype === 'admin') role.permissions = [...ADMIN_PERMISSIONS, ...ADMIN_EXTRA];
+          if (role.id === ROLE_TEACHER) {
+            role.permissions = [...role.permissions, 'academic.structure.view', 'assessment.create', 'assessment.marks.enter'];
+          }
+        }
+        fakeDb.roles.push({
+          id: ROLE_EXAM_OFFICER,
+          tenantId: NORTHFIELD.id,
+          name: 'Exam Officer',
+          archetype: null,
+          permissions: ['academic.structure.view', 'assessment.marks.validate', 'assessment.marks.lock'],
+        });
+        fakeDb.addUser(
+          { tenantId: NORTHFIELD.id, email: 'exams@northfield.school', firstName: 'E.', lastName: 'Officer', passwordHash },
+          [ROLE_EXAM_OFFICER],
+        );
+      });
+
+      it('needs the Assessment module and the assessment permissions', async () => {
+        const s = await school();
+        await http().get('/api/assessments').set('X-Tenant', 'northfield').expect(401);
+        const sunrise = await as('admin@sunrise.school', 'sunrise');
+        expect((await api(sunrise).get('/assessments').expect(403)).body.error.code).toBe('MODULE_INACTIVE');
+
+        const exams = api(await as('exams@northfield.school'));
+        await exams.get('/assessments').expect(200);
+        expect((await exams.post('/assessments', seq1(s)).expect(403)).body.error.code).toBe('PERMISSION_DENIED');
+
+        const teacher = api(await as('teacher@northfield.school'));
+        const created = (await teacher.post('/assessments', seq1(s)).expect(201)).body.data;
+        expect((await teacher.post(`/assessments/${created.id}/validate`).expect(403)).body.error.code).toBe('PERMISSION_DENIED');
+        await teacher.post(`/assessments/${created.id}/lock`).expect(403);
+      });
+
+      it('a teacher creates assessments for their own class only', async () => {
+        const s = await school();
+        const teacher = api(await as('teacher@northfield.school'));
+
+        const created = (await teacher.post('/assessments', seq1(s)).expect(201)).body.data;
+        expect(created).toMatchObject({
+          yearId: s.year.id,
+          term: { id: s.term1.id, name: 'First Term' },
+          section: { id: s.f1a.id, label: 'Form 1 A' },
+          subject: { id: s.math.id, code: 'MATH', name: 'Mathematics' },
+          name: 'Sequence 1',
+          maxScore: 20,
+          weight: 1,
+          heldOn: '2026-10-12',
+          status: 'open',
+          submittedAt: null,
+        });
+        const exam = (await teacher.post('/assessments', seq1(s, { name: 'Term exam', maxScore: 40, weight: 2, heldOn: null })).expect(201)).body.data;
+        expect(exam).toMatchObject({ maxScore: 40, weight: 2, heldOn: null });
+
+        expect((await teacher.post('/assessments', seq1(s, { name: 'sequence 1' })).expect(409)).body.error.code).toBe('NAME_TAKEN');
+        // The same name is fine in another term.
+        await teacher.post('/assessments', seq1(s, { termId: s.term2.id, heldOn: '2027-01-25' })).expect(201);
+
+        const notMine = await teacher.post('/assessments', seq1(s, { sectionId: s.f1b.id })).expect(403);
+        expect(notMine.body.error.code).toBe('NOT_YOUR_CLASS');
+        await teacher.post('/assessments', seq1(s, { subjectId: s.eng.id })).expect(403);
+
+        const a = api(await admin());
+        expect((await a.post('/assessments', seq1(s, { heldOn: '2026-12-14' })).expect(400)).body.error.code).toBe('DATE_OUTSIDE_TERM');
+        expect((await a.post('/assessments', seq1(s, { heldOn: '2026-02-30' })).expect(400)).body.error.code).toBe('DATE_INVALID');
+        expect((await a.post('/assessments', seq1(s, { subjectId: s.other.id })).expect(400)).body.error.code).toBe('SUBJECT_NOT_IN_CLASS');
+        expect((await a.post('/assessments', seq1(s, { termId: OTHER_ID })).expect(404)).body.error.code).toBe('TERM_NOT_FOUND');
+        expect((await a.post('/assessments', seq1(s, { sectionId: OTHER_ID })).expect(404)).body.error.code).toBe('SECTION_NOT_FOUND');
+        await a.post('/assessments', seq1(s, { maxScore: 0 })).expect(400);
+        await a.post('/assessments', seq1(s, { weight: 11 })).expect(400);
+        await a.post('/assessments', seq1(s, { name: '  ' })).expect(400);
+        await a.post('/assessments', seq1(s, { status: 'locked' })).expect(400);
+        expect(fakeDb.assessments.rows).toHaveLength(3);
+      });
+
+      it('lists the caller\'s classes: a teacher sees only theirs, the exam officer sees all', async () => {
+        const s = await school();
+        const teacher = api(await as('teacher@northfield.school'));
+        const a = api(await admin());
+        await teacher.post('/assessments', seq1(s)).expect(201);
+        await teacher.post('/assessments', seq1(s, { name: 'Sequence 2', heldOn: '2026-11-16' })).expect(201);
+        await teacher.post('/assessments', seq1(s, { termId: s.term2.id, name: 'Sequence 3', heldOn: '2027-01-25' })).expect(201);
+        await a.post('/assessments', seq1(s, { sectionId: s.f1b.id, subjectId: s.eng.id })).expect(201);
+
+        const mine = (await teacher.get('/assessments').expect(200)).body.data;
+        expect(mine.map((x: any) => `${x.section.label} ${x.subject.code} ${x.name}`)).toEqual([
+          'Form 1 A MATH Sequence 1',
+          'Form 1 A MATH Sequence 2',
+          'Form 1 A MATH Sequence 3',
+        ]);
+        const all = (await api(await as('exams@northfield.school')).get('/assessments').expect(200)).body.data;
+        expect(all).toHaveLength(4);
+        const firstTerm = (await a.get(`/assessments?termId=${s.term1.id}`).expect(200)).body.data;
+        expect(firstTerm).toHaveLength(3);
+        expect((await a.get(`/assessments?sectionId=${s.f1b.id}`).expect(200)).body.data).toHaveLength(1);
+        expect((await a.get('/assessments?status=locked').expect(200)).body.data).toEqual([]);
+        await a.get('/assessments?status=done').expect(400);
+
+        const english = all.find((x: any) => x.subject.code === 'ENG');
+        expect((await teacher.get(`/assessments/${english.id}`).expect(403)).body.error.code).toBe('NOT_YOUR_CLASS');
+        await teacher.get(`/assessments/${mine[0].id}`).expect(200);
+      });
+
+      it('goes open, submitted, validated, locked, with every step audited', async () => {
+        const s = await school();
+        const teacher = api(await as('teacher@northfield.school'));
+        const exams = api(await as('exams@northfield.school'));
+        const id = (await teacher.post('/assessments', seq1(s)).expect(201)).body.data.id;
+
+        await teacher.patch(`/assessments/${id}`, { maxScore: 30, heldOn: '2026-10-13' }).expect(200);
+        expect((await exams.post(`/assessments/${id}/validate`).expect(409)).body.error.code).toBe('STATUS_INVALID');
+
+        const submitted = (await teacher.post(`/assessments/${id}/submit`).expect(201)).body.data;
+        expect(submitted.status).toBe('submitted');
+        expect(submitted.submittedAt).toEqual(expect.any(String));
+        expect((await teacher.patch(`/assessments/${id}`, { name: 'Changed' }).expect(409)).body.error.code).toBe('ASSESSMENT_NOT_OPEN');
+        expect((await teacher.del(`/assessments/${id}`).expect(409)).body.error.code).toBe('ASSESSMENT_NOT_OPEN');
+
+        // Sent back to the teacher, then submitted again.
+        const reopened = (await exams.post(`/assessments/${id}/reopen`).expect(201)).body.data;
+        expect(reopened).toMatchObject({ status: 'open', submittedAt: null });
+        await teacher.post(`/assessments/${id}/submit`).expect(201);
+
+        await exams.post(`/assessments/${id}/validate`).expect(201);
+        const locked = (await exams.post(`/assessments/${id}/lock`).expect(201)).body.data;
+        expect(locked.status).toBe('locked');
+        expect(locked.lockedAt).toEqual(expect.any(String));
+        for (const step of ['submit', 'validate', 'reopen', 'lock']) {
+          const who = step === 'submit' ? teacher : exams;
+          expect((await who.post(`/assessments/${id}/${step}`).expect(409)).body.error.code).toBe('STATUS_INVALID');
+        }
+        await api(await admin()).del(`/assessments/${id}`).expect(409);
+
+        const log = fakeDb.audit.filter((x) => x.entity === 'assessment');
+        expect(log.map((x) => x.action)).toEqual([
+          'assessment.created',
+          'assessment.updated',
+          'assessment.submitted',
+          'assessment.reopened',
+          'assessment.submitted',
+          'assessment.validated',
+          'assessment.locked',
+        ]);
+        expect(log[1].detail).toMatchObject({ changed: ['maxScore', 'heldOn'] });
+        expect(log[6]).toMatchObject({ tenantId: NORTHFIELD.id, detail: { section: 'Form 1 A', subject: 'MATH', from: 'validated', to: 'locked' } });
+      });
+
+      it('an open assessment can be deleted; the academic structure keeps the ones that exist', async () => {
+        const s = await school();
+        const a = api(await admin());
+        const english = (await a.post('/assessments', seq1(s, { sectionId: s.f1b.id, subjectId: s.eng.id })).expect(201)).body.data;
+        const spare = (await a.post('/assessments', seq1(s, { name: 'Spare' })).expect(201)).body.data;
+        expect((await a.del(`/assessments/${spare.id}`).expect(200)).body.data).toEqual({ id: spare.id, deleted: true });
+        await a.get(`/assessments/${spare.id}`).expect(404);
+
+        expect((await a.del(`/academic/terms/${s.term1.id}`).expect(409)).body.error.code).toBe('TERM_HAS_ASSESSMENTS');
+        expect((await a.del(`/academic/sections/${s.f1b.id}`).expect(409)).body.error.code).toBe('SECTION_HAS_ASSESSMENTS');
+        const drop = await a.put(`/academic/classes/${s.form1.id}/subjects`, { subjects: [{ subjectId: s.math.id, coefficient: 5 }] }).expect(409);
+        expect(drop.body.error.code).toBe('SUBJECT_HAS_ASSESSMENTS');
+
+        await a.del(`/assessments/${english.id}`).expect(200);
+        await a.del(`/academic/terms/${s.term2.id}`).expect(200);
+      });
+
+      it('keeps assessments inside their school', async () => {
+        const s = await school();
+        const id = (await api(await admin()).post('/assessments', seq1(s)).expect(201)).body.data.id;
+        fakeDb.activate(SUNRISE.id, ['academic', 'assessment']);
+        for (const role of fakeDb.roles) {
+          if (role.id === ROLE_SUNRISE_ADMIN) role.permissions = [...ADMIN_PERMISSIONS, ...ADMIN_EXTRA];
+        }
+        app.get(ModuleRegistryService).invalidateAll();
+        const sunrise = api(await as('admin@sunrise.school', 'sunrise'));
+        expect((await sunrise.get('/assessments').expect(200)).body.data).toEqual([]);
+        expect((await sunrise.get(`/assessments/${id}`).expect(404)).body.error.code).toBe('ASSESSMENT_NOT_FOUND');
+        await sunrise.post(`/assessments/${id}/validate`).expect(404);
+        await sunrise.post('/assessments', seq1(s)).expect(404);
+      });
+    });
+
+    describe('students and enrollment (Phase 2)', () => {
+      const EXTRA = [
+        'academic.structure.manage',
+        'academic.structure.view',
+        'student.record.edit',
+        'student.record.view',
+        'enrollment.enroll',
+        'enrollment.withdraw',
+      ];
+      const OTHER_ID = '99999999-9999-4999-8999-999999999999';
+
+      async function as(email: string, school = 'northfield') {
+        const { token } = await signIn(email, school);
+        return { 'X-Tenant': school, Authorization: `Bearer ${token}` };
+      }
+      const api = (auth: Record<string, string>) => ({
+        get: (url: string) => http().get(`/api${url}`).set(auth),
+        post: (url: string, body: object = {}) => http().post(`/api${url}`).set(auth).send(body),
+        patch: (url: string, body: object) => http().patch(`/api${url}`).set(auth).send(body),
+        del: (url: string) => http().delete(`/api${url}`).set(auth),
+      });
+      const admin = async () => api(await as('admin@northfield.school'));
+      const ADA = {
+        firstName: ' Ada ',
+        lastName: 'Abena',
+        gender: 'female',
+        dateOfBirth: '2014-03-02',
+        placeOfBirth: ' Buea ',
+        guardianName: 'Abena  Paul',
+        guardianPhone: '+237 677 00 11 22',
+        guardianRelationship: 'Father',
+      };
+
+      /** 2026-2027 (current); Form 1 A (capacity 3) and Form 1 B; four students. */
+      async function school() {
+        const a = await admin();
+        const year = (await a.post('/academic/years', { name: '2026-2027', startDate: '2026-09-07', endDate: '2027-06-30' }).expect(201)).body.data;
+        const form1 = (await a.post('/academic/classes', { name: 'Form 1', level: 1 }).expect(201)).body.data;
+        await a.post(`/academic/classes/${form1.id}/sections`, { name: 'A', capacity: 3 }).expect(201);
+        const both = (await a.post(`/academic/classes/${form1.id}/sections`, { name: 'B' }).expect(201)).body.data;
+        const [f1a, f1b] = both.sections;
+        const ada = (await a.post('/students', ADA).expect(201)).body.data;
+        const bih = (await a.post('/students', { firstName: 'Clarisse', lastName: 'Bih', gender: 'female' }).expect(201)).body.data;
+        const che = (await a.post('/students', { firstName: 'Daniel', lastName: 'Che', gender: 'male' }).expect(201)).body.data;
+        const eto = (await a.post('/students', { firstName: 'Samuel', lastName: 'Eto', gender: 'male' }).expect(201)).body.data;
+        return { a, year, form1, f1a, f1b, ada, bih, che, eto };
+      }
+
+      beforeEach(() => {
+        fakeDb.activate(NORTHFIELD.id, ['enrollment']);
+        app.get(ModuleRegistryService).invalidateAll();
+        for (const role of fakeDb.roles) {
+          if (role.archetype === 'admin') role.permissions = [...new Set([...ADMIN_PERMISSIONS, ...EXTRA])];
+        }
+      });
+
+      it('needs the modules and the permissions', async () => {
+        await http().get('/api/students').set('X-Tenant', 'northfield').expect(401);
+        const teacher = api(await as('teacher@northfield.school'));
+        await teacher.get('/students').expect(200);
+        await teacher.get('/enrollment').expect(200);
+        expect((await teacher.post('/students', ADA).expect(403)).body.error.code).toBe('PERMISSION_DENIED');
+        expect((await teacher.post('/enrollment', { sectionId: OTHER_ID, studentIds: [OTHER_ID] }).expect(403)).body.error.code).toBe('PERMISSION_DENIED');
+
+        const sunrise = api(await as('admin@sunrise.school', 'sunrise'));
+        await sunrise.get('/students').expect(200);
+        expect((await sunrise.get('/enrollment').expect(403)).body.error.code).toBe('MODULE_INACTIVE');
+      });
+
+      it('creates students with a generated matricule, cleaned fields and an audit entry', async () => {
+        const a = await admin();
+        const ada = (await a.post('/students', ADA).expect(201)).body.data;
+        expect(ada).toMatchObject({
+          matricule: 'STU-0001',
+          fullName: 'Abena Ada',
+          gender: 'female',
+          dateOfBirth: '2014-03-02',
+          placeOfBirth: 'Buea',
+          guardian: { name: 'Abena Paul', phone: '+237 677 00 11 22', relationship: 'Father' },
+          status: 'active',
+          current: null,
+          enrollments: [],
+        });
+        const own = (await a.post('/students', { firstName: 'Clarisse', lastName: 'Bih', gender: 'female', matricule: ' nf/2026/ 014 ' }).expect(201)).body.data;
+        expect(own).toMatchObject({ matricule: 'NF/2026/014', guardian: null, dateOfBirth: null });
+        expect((await a.post('/students', { ...ADA, firstName: 'Second' }).expect(201)).body.data.matricule).toBe('STU-0002');
+
+        expect((await a.post('/students', { ...ADA, matricule: 'stu-0001' }).expect(409)).body.error.code).toBe('MATRICULE_TAKEN');
+        expect((await a.post('/students', { ...ADA, matricule: 'x' }).expect(400)).body.error.code).toBe('MATRICULE_INVALID');
+        expect((await a.post('/students', { ...ADA, dateOfBirth: '2062-03-02' }).expect(400)).body.error.code).toBe('DATE_OF_BIRTH_INVALID');
+        expect((await a.post('/students', { ...ADA, dateOfBirth: '2014-02-30' }).expect(400)).body.error.code).toBe('DATE_INVALID');
+        expect((await a.post('/students', { ...ADA, guardianPhone: '12' }).expect(400)).body.error.code).toBe('PHONE_INVALID');
+        await a.post('/students', { ...ADA, gender: 'other' }).expect(400);
+        await a.post('/students', { ...ADA, firstName: ' ' }).expect(400);
+        await a.post('/students', { ...ADA, fees: 50000 }).expect(400);
+
+        const entry = fakeDb.audit.find((x) => x.action === 'student.created' && x.entityId === ada.id);
+        expect(entry).toMatchObject({ tenantId: NORTHFIELD.id, entity: 'student', detail: { matricule: 'STU-0001', name: 'Abena Ada' } });
+      });
+
+      it('edits students, searches them, and keeps the changes in the audit log', async () => {
+        const s = await school();
+        const updated = (await s.a.patch(`/students/${s.ada.id}`, { guardianPhone: '677 99 88 77', placeOfBirth: null }).expect(200)).body.data;
+        expect(updated).toMatchObject({ placeOfBirth: null, guardian: { phone: '677 99 88 77' } });
+        await s.a.patch(`/students/${s.ada.id}`, { guardianPhone: '677 99 88 77' }).expect(200);
+        const edits = fakeDb.audit.filter((x) => x.action === 'student.updated');
+        expect(edits).toHaveLength(1);
+        expect(edits[0].detail).toEqual({ matricule: 'STU-0001', changed: ['guardianPhone', 'placeOfBirth'] });
+        expect((await s.a.patch(`/students/${s.bih.id}`, { matricule: 'STU-0001' }).expect(409)).body.error.code).toBe('MATRICULE_TAKEN');
+        await s.a.get(`/students/${OTHER_ID}`).expect(404);
+
+        const found = (await s.a.get('/students?search=abena%20paul').expect(200)).body.data;
+        expect(found.map((x: any) => x.fullName)).toEqual(['Abena Ada']);
+        const all = (await s.a.get('/students').expect(200)).body.data;
+        expect(all.map((x: any) => x.fullName)).toEqual(['Abena Ada', 'Bih Clarisse', 'Che Daniel', 'Eto Samuel']);
+      });
+
+      it('enrolls students in a section, within its capacity, once per year', async () => {
+        const s = await school();
+        const added = (await s.a.post('/enrollment', { sectionId: s.f1a.id, studentIds: [s.che.id, s.ada.id], enrolledOn: '2026-09-07' }).expect(201)).body.data;
+        expect(added.map((e: any) => [e.student.fullName, e.section.label, e.status, e.enrolledOn])).toEqual([
+          ['Abena Ada', 'Form 1 A', 'active', '2026-09-07'],
+          ['Che Daniel', 'Form 1 A', 'active', '2026-09-07'],
+        ]);
+
+        const again = await s.a.post('/enrollment', { sectionId: s.f1b.id, studentIds: [s.ada.id, s.bih.id] }).expect(409);
+        expect(again.body.error).toMatchObject({ code: 'ALREADY_ENROLLED', students: [s.ada.id] });
+        expect(again.body.error.message).toContain('Abena Ada');
+        const full = await s.a.post('/enrollment', { sectionId: s.f1a.id, studentIds: [s.bih.id, s.eto.id] }).expect(409);
+        expect(full.body.error).toMatchObject({ code: 'SECTION_FULL', free: 1 });
+        expect((await s.a.post('/enrollment', { sectionId: s.f1b.id, studentIds: [s.bih.id, s.bih.id] }).expect(400)).body.error.code).toBe('DUPLICATE_STUDENT');
+        expect((await s.a.post('/enrollment', { sectionId: s.f1b.id, studentIds: [OTHER_ID] }).expect(404)).body.error.code).toBe('STUDENT_NOT_FOUND');
+        expect((await s.a.post('/enrollment', { sectionId: OTHER_ID, studentIds: [s.bih.id] }).expect(404)).body.error.code).toBe('SECTION_NOT_FOUND');
+        const outside = await s.a.post('/enrollment', { sectionId: s.f1b.id, studentIds: [s.bih.id], enrolledOn: '2027-07-01' }).expect(400);
+        expect(outside.body.error.code).toBe('DATE_OUTSIDE_YEAR');
+        await s.a.post('/enrollment', { sectionId: s.f1b.id, studentIds: [] }).expect(400);
+        await s.a.post('/enrollment', { sectionId: s.f1b.id, studentIds: ['nope'] }).expect(400);
+
+        await s.a.patch(`/students/${s.eto.id}/status`, { status: 'inactive' }).expect(200);
+        expect((await s.a.post('/enrollment', { sectionId: s.f1b.id, studentIds: [s.eto.id] }).expect(400)).body.error.code).toBe('STUDENT_INACTIVE');
+
+        const counts = (await s.a.get('/enrollment/sections').expect(200)).body.data;
+        expect(counts.year).toEqual({ id: s.year.id, name: '2026-2027' });
+        expect(counts.sections.map((c: any) => [c.label, c.enrolled, c.boys, c.girls, c.capacity])).toEqual([
+          ['Form 1 A', 2, 1, 1, 3],
+          ['Form 1 B', 0, 0, 0, null],
+        ]);
+        expect((await s.a.get(`/students?sectionId=${s.f1a.id}`).expect(200)).body.data.map((x: any) => x.fullName)).toEqual(['Abena Ada', 'Che Daniel']);
+        expect((await s.a.get('/students?unplaced=true').expect(200)).body.data.map((x: any) => x.fullName)).toEqual(['Bih Clarisse']);
+        expect(fakeDb.audit.filter((x) => x.action === 'enrollment.created')).toHaveLength(2);
+      });
+
+      it('transfers a student: the old enrollment is kept as history', async () => {
+        const s = await school();
+        const [ada] = (await s.a.post('/enrollment', { sectionId: s.f1a.id, studentIds: [s.ada.id], enrolledOn: '2026-09-07' }).expect(201)).body.data;
+
+        expect((await s.a.post(`/enrollment/${ada.id}/transfer`, { sectionId: s.f1a.id }).expect(400)).body.error.code).toBe('SAME_SECTION');
+        const early = await s.a.post(`/enrollment/${ada.id}/transfer`, { sectionId: s.f1b.id, on: '2026-09-06' }).expect(400);
+        expect(early.body.error.code).toBe('DATE_OUTSIDE_YEAR');
+        const moved = (await s.a.post(`/enrollment/${ada.id}/transfer`, { sectionId: s.f1b.id, on: '2026-10-05' }).expect(201)).body.data;
+        expect(moved).toMatchObject({ section: { label: 'Form 1 B' }, status: 'active', enrolledOn: '2026-10-05' });
+        expect((await s.a.post(`/enrollment/${ada.id}/transfer`, { sectionId: s.f1b.id }).expect(409)).body.error.code).toBe('ENROLLMENT_CLOSED');
+
+        const detail = (await s.a.get(`/students/${s.ada.id}`).expect(200)).body.data;
+        expect(detail.current).toMatchObject({ enrollmentId: moved.id, label: 'Form 1 B' });
+        expect(detail.enrollments.map((e: any) => [e.section.label, e.status, e.enrolledOn, e.leftOn])).toEqual([
+          ['Form 1 B', 'active', '2026-10-05', null],
+          ['Form 1 A', 'transferred', '2026-09-07', '2026-10-05'],
+        ]);
+        const log = fakeDb.audit.find((x) => x.action === 'enrollment.transferred');
+        expect(log?.detail).toMatchObject({ student: 'Abena Ada', from: 'Form 1 A', to: 'Form 1 B', previousEnrollmentId: ada.id });
+        const history = (await s.a.get(`/enrollment?sectionId=${s.f1a.id}`).expect(200)).body.data;
+        expect(history.map((e: any) => e.status)).toEqual(['transferred']);
+      });
+
+      it('withdraws a student, who can then leave the school', async () => {
+        const s = await school();
+        const [che] = (await s.a.post('/enrollment', { sectionId: s.f1a.id, studentIds: [s.che.id], enrolledOn: '2026-09-07' }).expect(201)).body.data;
+        expect((await s.a.patch(`/students/${s.che.id}/status`, { status: 'inactive' }).expect(409)).body.error.code).toBe('STUDENT_ENROLLED');
+
+        const left = (await s.a.post(`/enrollment/${che.id}/withdraw`, { on: '2026-11-02', reason: ' Moved  to Douala ' }).expect(201)).body.data;
+        expect(left).toMatchObject({ status: 'withdrawn', leftOn: '2026-11-02', reason: 'Moved to Douala' });
+        await s.a.post(`/enrollment/${che.id}/withdraw`, {}).expect(409);
+        const gone = (await s.a.patch(`/students/${s.che.id}/status`, { status: 'inactive' }).expect(200)).body.data;
+        expect(gone).toMatchObject({ status: 'inactive', current: null });
+        expect((await s.a.get('/enrollment/sections').expect(200)).body.data.sections[0].enrolled).toBe(0);
+
+        // Teachers can read but not withdraw.
+        const [ada] = (await s.a.post('/enrollment', { sectionId: s.f1a.id, studentIds: [s.ada.id] }).expect(201)).body.data;
+        await api(await as('teacher@northfield.school')).post(`/enrollment/${ada.id}/withdraw`, {}).expect(403);
+      });
+
+      it('keeps sections and years with students, and needs a current year to enroll', async () => {
+        const s = await school();
+        await s.a.post('/enrollment', { sectionId: s.f1b.id, studentIds: [s.bih.id], enrolledOn: '2026-09-07' }).expect(201);
+        expect((await s.a.del(`/academic/sections/${s.f1b.id}`).expect(409)).body.error.code).toBe('SECTION_HAS_STUDENTS');
+        await s.a.del(`/academic/sections/${s.f1a.id}`).expect(200);
+
+        const next = (await s.a.post('/academic/years', { name: '2027-2028', startDate: '2027-09-06', endDate: '2028-06-30' }).expect(201)).body.data;
+        await s.a.post('/enrollment', { yearId: next.id, sectionId: s.f1b.id, studentIds: [s.bih.id], enrolledOn: '2027-09-06' }).expect(201);
+        expect((await s.a.del(`/academic/years/${next.id}`).expect(409)).body.error.code).toBe('YEAR_HAS_ENROLLMENTS');
+
+        for (const y of fakeDb.academicYears.rows) y.isCurrent = false;
+        expect((await s.a.post('/enrollment', { sectionId: s.f1b.id, studentIds: [s.ada.id] }).expect(400)).body.error.code).toBe('YEAR_REQUIRED');
+        expect((await s.a.get('/enrollment').expect(200)).body.data).toEqual([]);
+      });
+
+      it('keeps students and enrollments inside their school', async () => {
+        const s = await school();
+        const [ada] = (await s.a.post('/enrollment', { sectionId: s.f1a.id, studentIds: [s.ada.id] }).expect(201)).body.data;
+        fakeDb.activate(SUNRISE.id, ['academic', 'enrollment']);
+        app.get(ModuleRegistryService).invalidateAll();
+        const sunrise = api(await as('admin@sunrise.school', 'sunrise'));
+        expect((await sunrise.get('/students').expect(200)).body.data).toEqual([]);
+        expect((await sunrise.get(`/students/${s.ada.id}`).expect(404)).body.error.code).toBe('STUDENT_NOT_FOUND');
+        expect((await sunrise.post(`/enrollment/${ada.id}/withdraw`, {}).expect(404)).body.error.code).toBe('ENROLLMENT_NOT_FOUND');
+        expect(fakeDb.students.rows.every((r) => r.tenantId === NORTHFIELD.id)).toBe(true);
+      });
+    });
+
+    describe('marks and results (Phase 3)', () => {
+      const ADMIN_EXTRA = [
+        'academic.structure.manage',
+        'academic.structure.view',
+        'academic.teacher.assign',
+        'staff.record.edit',
+        'staff.record.view',
+        'student.record.edit',
+        'enrollment.enroll',
+        'enrollment.withdraw',
+        'assessment.create',
+        'assessment.marks.enter',
+        'assessment.marks.validate',
+        'assessment.marks.lock',
+        'assessment.marks.override',
+        'results.compute',
+        'results.reportcard.generate',
+      ];
+      const ROLE_EXAM_OFFICER = 'a0000000-0000-4000-8000-000000000005';
+
+      async function as(email: string, school = 'northfield') {
+        const { token } = await signIn(email, school);
+        return { 'X-Tenant': school, Authorization: `Bearer ${token}` };
+      }
+      const api = (auth: Record<string, string>) => ({
+        get: (url: string) => http().get(`/api${url}`).set(auth),
+        post: (url: string, body: object = {}) => http().post(`/api${url}`).set(auth).send(body),
+        put: (url: string, body: object) => http().put(`/api${url}`).set(auth).send(body),
+        del: (url: string) => http().delete(`/api${url}`).set(auth),
+      });
+
+      /**
+       * Form 1 A (MATH coef 4, ENG coef 3) with Abena Ada, Bih Clarisse, Che Daniel;
+       * Eto Samuel in Form 1 B. The teacher account is Ngwa Brenda, MATH in Form 1 A.
+       */
+      async function school() {
+        const a = api(await as('admin@northfield.school'));
+        const year = (await a.post('/academic/years', { name: '2026-2027', startDate: '2026-09-07', endDate: '2027-06-30' }).expect(201)).body.data;
+        const withTerm = (await a.post(`/academic/years/${year.id}/terms`, { name: 'First Term', startDate: '2026-09-07', endDate: '2026-12-11' }).expect(201)).body.data;
+        const term = withTerm.terms[0];
+        const math = (await a.post('/academic/subjects', { code: 'MATH', name: 'Mathematics' }).expect(201)).body.data;
+        const eng = (await a.post('/academic/subjects', { code: 'ENG', name: 'English' }).expect(201)).body.data;
+        const form1 = (await a.post('/academic/classes', { name: 'Form 1', level: 1 }).expect(201)).body.data;
+        await a.post(`/academic/classes/${form1.id}/sections`, { name: 'A' }).expect(201);
+        const both = (await a.post(`/academic/classes/${form1.id}/sections`, { name: 'B' }).expect(201)).body.data;
+        const [f1a, f1b] = both.sections;
+        await a
+          .put(`/academic/classes/${form1.id}/subjects`, {
+            subjects: [
+              { subjectId: math.id, coefficient: 4 },
+              { subjectId: eng.id, coefficient: 3 },
+            ],
+          })
+          .expect(200);
+        const brenda = (await a.post('/staff', { firstName: 'Brenda', lastName: 'Ngwa', position: 'Mathematics teacher' }).expect(201)).body.data;
+        const userId = fakeDb.users.find((u) => u.email === 'teacher@northfield.school')!.id;
+        await a.put(`/staff/${brenda.id}/account`, { userId }).expect(200);
+        await a.put('/teaching/assignments', { sectionId: f1a.id, subjectId: math.id, staffMemberId: brenda.id }).expect(200);
+
+        const student = async (firstName: string, lastName: string, gender: string) =>
+          (await a.post('/students', { firstName, lastName, gender }).expect(201)).body.data;
+        const ada = await student('Ada', 'Abena', 'female');
+        const bih = await student('Clarisse', 'Bih', 'female');
+        const che = await student('Daniel', 'Che', 'male');
+        const eto = await student('Samuel', 'Eto', 'male');
+        await a.post('/enrollment', { sectionId: f1a.id, studentIds: [ada.id, bih.id, che.id], enrolledOn: '2026-09-07' }).expect(201);
+        await a.post('/enrollment', { sectionId: f1b.id, studentIds: [eto.id], enrolledOn: '2026-09-07' }).expect(201);
+        return { a, year, term, math, eng, f1a, f1b, ada, bih, che, eto };
+      }
+      type School = Awaited<ReturnType<typeof school>>;
+      const create = async (who: ReturnType<typeof api>, s: School, over: object = {}) =>
+        (await who.post('/assessments', { termId: s.term.id, sectionId: s.f1a.id, subjectId: s.math.id, name: 'Sequence 1', ...over }).expect(201)).body.data;
+      const save = (who: ReturnType<typeof api>, id: string, marks: [string, unknown][], reason?: string) =>
+        who.put(`/assessments/${id}/marks`, { marks: marks.map(([studentId, value]) => ({ studentId, value })), ...(reason ? { reason } : {}) });
+
+      beforeEach(() => {
+        fakeDb.modules.push(
+          { code: 'staff', name: 'Staff', category: 'business', dependsOn: [] },
+          { code: 'results', name: 'Results', category: 'business', dependsOn: ['assessment'] },
+        );
+        fakeDb.activate(NORTHFIELD.id, ['staff', 'enrollment', 'assessment', 'results']);
+        app.get(ModuleRegistryService).invalidateAll();
+        for (const role of fakeDb.roles) {
+          if (role.archetype === 'admin') role.permissions = [...new Set([...ADMIN_PERMISSIONS, ...ADMIN_EXTRA])];
+          if (role.id === ROLE_TEACHER) {
+            role.permissions = [...role.permissions, 'academic.structure.view', 'assessment.create', 'assessment.marks.enter'];
+          }
+        }
+        fakeDb.roles.push({
+          id: ROLE_EXAM_OFFICER,
+          tenantId: NORTHFIELD.id,
+          name: 'Exam Officer',
+          archetype: null,
+          permissions: [
+            'academic.structure.view',
+            'assessment.marks.validate',
+            'assessment.marks.lock',
+            'assessment.marks.override',
+            'results.compute',
+            'results.reportcard.generate',
+          ],
+        });
+        fakeDb.addUser(
+          { tenantId: NORTHFIELD.id, email: 'exams@northfield.school', firstName: 'E.', lastName: 'Officer', passwordHash },
+          [ROLE_EXAM_OFFICER],
+        );
+      });
+
+      it('the teacher fills the mark sheet of their class, then submits it complete', async () => {
+        const s = await school();
+        const teacher = api(await as('teacher@northfield.school'));
+        const seq = await create(teacher, s);
+
+        const empty = (await teacher.get(`/assessments/${seq.id}/marks`).expect(200)).body.data;
+        expect(empty.students.map((l: any) => [l.fullName, l.score, l.absent, l.inSection])).toEqual([
+          ['Abena Ada', null, false, true],
+          ['Bih Clarisse', null, false, true],
+          ['Che Daniel', null, false, true],
+        ]);
+        expect(empty).toMatchObject({ editing: 'open', summary: { students: 3, missing: 3, average: null } });
+
+        const bad = await save(teacher, seq.id, [[s.ada.id, '21'], [s.bih.id, 'twelve'], [s.che.id, '10']]).expect(400);
+        expect(bad.body.error.code).toBe('MARKS_INVALID');
+        expect(bad.body.error.errors.map((e: any) => [e.studentId, e.code])).toEqual([
+          [s.ada.id, 'MARK_OUT_OF_RANGE'],
+          [s.bih.id, 'MARK_INVALID'],
+        ]);
+        expect(fakeDb.marks.rows).toHaveLength(0);
+        expect((await save(teacher, seq.id, [[s.eto.id, 10]]).expect(400)).body.error.code).toBe('STUDENT_NOT_IN_SECTION');
+        expect((await save(teacher, seq.id, [[s.ada.id, 10], [s.ada.id, 11]]).expect(400)).body.error.code).toBe('DUPLICATE_STUDENT');
+
+        const sheet = (await save(teacher, seq.id, [[s.ada.id, '12,5'], [s.bih.id, 'abs']]).expect(200)).body.data;
+        expect(sheet.students.map((l: any) => [l.score, l.absent])).toEqual([[12.5, false], [null, true], [null, false]]);
+        expect(sheet.summary).toMatchObject({ marked: 1, absent: 1, missing: 1, average: 12.5 });
+
+        const incomplete = await teacher.post(`/assessments/${seq.id}/submit`).expect(409);
+        expect(incomplete.body.error).toMatchObject({ code: 'MARKS_INCOMPLETE', missing: [s.che.id] });
+        await save(teacher, seq.id, [[s.che.id, 9]]).expect(200);
+        // Clearing a cell removes the mark.
+        await save(teacher, seq.id, [[s.che.id, '']]).expect(200);
+        expect(fakeDb.marks.rows).toHaveLength(2);
+        await save(teacher, seq.id, [[s.che.id, 9]]).expect(200);
+        await teacher.post(`/assessments/${seq.id}/submit`).expect(201);
+
+        const closed = await save(teacher, seq.id, [[s.che.id, 10]]).expect(409);
+        expect(closed.body.error.code).toBe('ASSESSMENT_NOT_OPEN');
+        expect((await teacher.get(`/assessments/${seq.id}/marks`).expect(200)).body.data.editing).toBe('closed');
+
+        // Another class: not the teacher's.
+        const english = await create(s.a, s, { subjectId: s.eng.id });
+        expect((await teacher.get(`/assessments/${english.id}/marks`).expect(403)).body.error.code).toBe('NOT_YOUR_CLASS');
+        expect((await save(teacher, english.id, [[s.ada.id, 10]]).expect(403)).body.error.code).toBe('NOT_YOUR_CLASS');
+
+        // Four saves changed something: the first two marks, Che 9, Che cleared, Che 9 again.
+        const saved = fakeDb.audit.filter((x) => x.action === 'assessment.marks.saved');
+        expect(saved).toHaveLength(4);
+        expect(saved[0].detail).toMatchObject({ name: 'Sequence 1', section: 'Form 1 A', subject: 'MATH', changed: 2 });
+      });
+
+      it('a locked mark changes only by override, with a reason, and is audited', async () => {
+        const s = await school();
+        const teacher = api(await as('teacher@northfield.school'));
+        const exams = api(await as('exams@northfield.school'));
+        const seq = await create(teacher, s);
+        await save(teacher, seq.id, [[s.ada.id, 14], [s.bih.id, 11], [s.che.id, 'ABS']]).expect(200);
+        await teacher.post(`/assessments/${seq.id}/submit`).expect(201);
+        await exams.post(`/assessments/${seq.id}/validate`).expect(201);
+        await exams.post(`/assessments/${seq.id}/lock`).expect(201);
+
+        expect((await exams.get(`/assessments/${seq.id}/marks`).expect(200)).body.data.editing).toBe('override');
+        expect((await save(teacher, seq.id, [[s.ada.id, 15]]).expect(403)).body.error.code).toBe('MARKS_LOCKED');
+        expect((await save(exams, seq.id, [[s.ada.id, 15]]).expect(400)).body.error.code).toBe('OVERRIDE_REASON_REQUIRED');
+        expect((await save(exams, seq.id, [[s.ada.id, 15]], 'short').expect(400)).body.error.code).toBe('OVERRIDE_REASON_REQUIRED');
+
+        const fixed = (await save(exams, seq.id, [[s.ada.id, 15], [s.che.id, 7]], 'Script re-marked after appeal').expect(200)).body.data;
+        expect(fixed.students.map((l: any) => l.score)).toEqual([15, 11, 7]);
+        expect(fixed.assessment.status).toBe('locked');
+        const overrides = fakeDb.audit.filter((x) => x.action === 'assessment.mark.overridden');
+        expect(overrides.map((x) => x.detail)).toEqual([
+          expect.objectContaining({ student: 'Abena Ada', before: 14, after: 15, reason: 'Script re-marked after appeal' }),
+          expect.objectContaining({ student: 'Che Daniel', before: 'ABS', after: 7 }),
+        ]);
+      });
+
+      it('a student who changes section keeps their mark on the sheet; only the current class must be complete', async () => {
+        const s = await school();
+        const teacher = api(await as('teacher@northfield.school'));
+        const seq = await create(teacher, s);
+        await save(teacher, seq.id, [[s.che.id, 13]]).expect(200);
+        const enrollment = fakeDb.enrollments.rows.find((e) => e.studentId === s.che.id)!;
+        await s.a.post(`/enrollment/${enrollment.id}/transfer`, { sectionId: s.f1b.id, on: '2026-10-05' }).expect(201);
+
+        const sheet = (await teacher.get(`/assessments/${seq.id}/marks`).expect(200)).body.data;
+        expect(sheet.students.map((l: any) => [l.fullName, l.inSection, l.score])).toEqual([
+          ['Abena Ada', true, null],
+          ['Bih Clarisse', true, null],
+          ['Che Daniel', false, 13],
+        ]);
+        expect(sheet.summary).toMatchObject({ students: 2, missing: 2, marked: 1 });
+        await save(teacher, seq.id, [[s.ada.id, 10], [s.bih.id, 12]]).expect(200);
+        await teacher.post(`/assessments/${seq.id}/submit`).expect(201);
+      });
+
+      it('computes results from locked assessments, or a provisional preview', async () => {
+        const s = await school();
+        const exams = api(await as('exams@northfield.school'));
+        const teacher = api(await as('teacher@northfield.school'));
+        const lockWith = async (over: object, marks: [string, unknown][], who = teacher, lock = true) => {
+          const x = await create(who, s, over);
+          await save(who, x.id, marks).expect(200);
+          await who.post(`/assessments/${x.id}/submit`).expect(201);
+          if (lock) {
+            await exams.post(`/assessments/${x.id}/validate`).expect(201);
+            await exams.post(`/assessments/${x.id}/lock`).expect(201);
+          }
+          return x;
+        };
+        await lockWith({}, [[s.ada.id, 16], [s.bih.id, 'ABS'], [s.che.id, 8]]);
+        await lockWith({ name: 'Sequence 2', maxScore: 40, weight: 2 }, [[s.ada.id, 30], [s.bih.id, 36], [s.che.id, 12]]);
+        await lockWith({ subjectId: s.eng.id }, [[s.ada.id, 12], [s.bih.id, 9], [s.che.id, 14]], s.a, false);
+        await create(teacher, s, { name: 'Sequence 3' });
+
+        const url = `/results?termId=${s.term.id}&sectionId=${s.f1a.id}`;
+        const official = (await exams.get(url).expect(200)).body.data;
+        expect(official).toMatchObject({
+          year: { name: '2026-2027' },
+          term: { name: 'First Term' },
+          section: { label: 'Form 1 A' },
+          provisional: false,
+          pending: 2,
+        });
+        expect(official.counted).toHaveLength(2);
+        expect(official.results.students.map((x: any) => [x.student.fullName, x.average, x.rank])).toEqual([
+          ['Bih Clarisse', 18, 1],
+          ['Abena Ada', 15.33, 2],
+          ['Che Daniel', 6.67, 3],
+        ]);
+        expect(official.results.stats).toMatchObject({ size: 3, classAverage: 13.33, passRate: 66.7 });
+        const mathLine = official.results.students[1].subjects.find((l: any) => l.code === 'MATH');
+        expect(mathLine).toMatchObject({ coefficient: 4, teacher: 'Ngwa Brenda', average: 15.33, rank: 2 });
+        expect(official.results.students[1].subjects.find((l: any) => l.code === 'ENG')).toMatchObject({ average: null, teacher: null });
+
+        const preview = (await exams.get(`${url}&provisional=true`).expect(200)).body.data;
+        expect(preview).toMatchObject({ provisional: true, pending: 1 });
+        expect(preview.results.students.map((x: any) => [x.student.fullName, x.average, x.rank])).toEqual([
+          ['Bih Clarisse', 14.14, 1],
+          ['Abena Ada', 13.9, 2],
+          ['Che Daniel', 9.81, 3],
+        ]);
+
+        const cards = (await exams.get(`/results/report-cards?termId=${s.term.id}&sectionId=${s.f1a.id}`).expect(200)).body.data;
+        expect(cards).toHaveLength(3);
+        expect(cards[0]).toMatchObject({
+          school: { name: NORTHFIELD.name },
+          section: { label: 'Form 1 A' },
+          result: { student: { fullName: 'Bih Clarisse' }, rank: 1 },
+          stats: { classified: 3 },
+        });
+
+        expect((await teacher.get(url).expect(403)).body.error.code).toBe('PERMISSION_DENIED');
+        await exams.get(`/results?termId=${s.term.id}`).expect(400);
+        const sunrise = api(await as('admin@sunrise.school', 'sunrise'));
+        expect((await sunrise.get(url).expect(403)).body.error.code).toBe('MODULE_INACTIVE');
+      });
+
+      it('deleting an open assessment deletes its marks', async () => {
+        const s = await school();
+        const teacher = api(await as('teacher@northfield.school'));
+        const seq = await create(teacher, s);
+        await save(teacher, seq.id, [[s.ada.id, 14], [s.bih.id, 11]]).expect(200);
+        await teacher.del(`/assessments/${seq.id}`).expect(200);
+        expect(fakeDb.marks.rows).toHaveLength(0);
+      });
+    });
   });
 });
