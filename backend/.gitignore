@@ -5,6 +5,7 @@ node_modules/
 # environment (NEVER commit real secrets)
 .env
 .env.local
+.env.backup
 .env.*.local
 !.env.example
 

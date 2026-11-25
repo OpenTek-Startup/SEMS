@@ -20,6 +20,7 @@ function matches(row: Row, where: Row = {}): boolean {
       // Every operator present must hold (e.g. { gte, lt } for a date range).
       const checks: boolean[] = [];
       if ('in' in expected) checks.push((expected.in as unknown[]).includes(actual));
+      if ('notIn' in expected) checks.push(!(expected.notIn as unknown[]).includes(actual));
       if ('not' in expected) checks.push(actual !== expected.not);
       if ('gte' in expected) checks.push(actual >= expected.gte);
       if ('lt' in expected) checks.push(actual < expected.lt);
@@ -60,7 +61,19 @@ interface FakeUserRole {
 export class FakeTable {
   rows: Row[] = [];
 
-  constructor(private readonly withId = true) {}
+  /**
+   * withId: give new rows a uuid. defaults: the column defaults of the real
+   * table (@default(...) in schema.prisma, and null for optional columns),
+   * which Postgres fills in and the services rely on.
+   */
+  constructor(
+    private readonly withId = true,
+    private readonly defaults: Row = {},
+  ) {}
+
+  private fresh(data: Row): Row {
+    return this.withId ? { id: randomUUID(), ...this.defaults, ...data } : { ...this.defaults, ...data };
+  }
 
   private find(where: Row = {}): Row {
     const row = this.rows.find((r) => matches(r, where));
@@ -76,13 +89,13 @@ export class FakeTable {
     },
     count: async ({ where }: Row = {}) => this.rows.filter((r) => matches(r, where)).length,
     create: async ({ data }: Row) => {
-      const row: Row = this.withId ? { id: randomUUID(), ...data } : { ...data };
+      const row: Row = this.fresh(data);
       this.rows.push(row);
       return { ...row };
     },
     createMany: async ({ data }: Row) => {
       const list = (Array.isArray(data) ? data : [data]) as Row[];
-      for (const d of list) this.rows.push(this.withId ? { id: randomUUID(), ...d } : { ...d });
+      for (const d of list) this.rows.push(this.fresh(d));
       return { count: list.length };
     },
     update: async ({ where, data }: Row) => {
@@ -129,7 +142,32 @@ export class FakeAuthDb {
   readonly subjects = new FakeTable();
   readonly classSubjects = new FakeTable(false);
   /** Staff (Phase 2) */
-  readonly staffMembers = new FakeTable();
+  readonly staffMembers = new FakeTable(true, { status: 'active', email: null, phone: null, hireDate: null, userId: null });
+  /** Teaching (Phase 2) */
+  readonly teacherAssignments = new FakeTable();
+  /** Assessment (Phase 3) */
+  readonly assessments = new FakeTable(true, {
+    maxScore: 20,
+    weight: 1,
+    heldOn: null,
+    status: 'open',
+    submittedAt: null,
+    validatedAt: null,
+    lockedAt: null,
+  });
+  /** Students and enrollment (Phase 2) */
+  readonly students = new FakeTable(true, {
+    status: 'active',
+    dateOfBirth: null,
+    placeOfBirth: null,
+    guardianName: null,
+    guardianPhone: null,
+    guardianRelationship: null,
+    admittedOn: null,
+  });
+  readonly enrollments = new FakeTable(true, { status: 'active', leftOn: null, reason: null });
+  /** Marks (Phase 3) */
+  readonly marks = new FakeTable(true, { score: null, absent: false });
 
   reset() {
     this.tenants = [];
@@ -141,7 +179,21 @@ export class FakeAuthDb {
     this.modules = [];
     this.tenantModules = [];
     this.permissions = [];
-    for (const t of [this.academicYears, this.terms, this.classes, this.sections, this.subjects, this.classSubjects, this.staffMembers]) {
+    const tables = [
+      this.academicYears,
+      this.terms,
+      this.classes,
+      this.sections,
+      this.subjects,
+      this.classSubjects,
+      this.staffMembers,
+      this.teacherAssignments,
+      this.assessments,
+      this.students,
+      this.enrollments,
+      this.marks,
+    ];
+    for (const t of tables) {
       t.rows = [];
     }
   }
@@ -385,6 +437,11 @@ export class FakeAuthDb {
       subject: this.subjects.ops,
       classSubject: this.classSubjects.ops,
       staffMember: this.staffMembers.ops,
+      teacherAssignment: this.teacherAssignments.ops,
+      assessment: this.assessments.ops,
+      student: this.students.ops,
+      enrollment: this.enrollments.ops,
+      mark: this.marks.ops,
     };
     const client: Row = {};
     for (const [key, ops] of Object.entries(models)) {

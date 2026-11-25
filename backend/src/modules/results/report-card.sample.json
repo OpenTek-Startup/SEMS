@@ -1,0 +1,630 @@
+[
+  {
+    "school": {
+      "name": "Northfield Bilingual College"
+    },
+    "year": {
+      "id": "year-2026-2027",
+      "name": "2026-2027"
+    },
+    "term": {
+      "id": "term-1",
+      "name": "First Term"
+    },
+    "section": {
+      "id": "form-1-a",
+      "label": "Form 1 A"
+    },
+    "result": {
+      "student": {
+        "studentId": "st-1",
+        "matricule": "NF26-0001",
+        "fullName": "Abena Ada"
+      },
+      "subjects": [
+        {
+          "subjectId": "math",
+          "code": "MATH",
+          "name": "Mathematics",
+          "coefficient": 4,
+          "teacher": "Ngwa Brenda",
+          "average": 15.75,
+          "points": 63,
+          "rank": 2,
+          "appreciation": "Good"
+        },
+        {
+          "subjectId": "eng",
+          "code": "ENG",
+          "name": "English Language",
+          "coefficient": 4,
+          "teacher": "Mbah Grace",
+          "average": 12.5,
+          "points": 50,
+          "rank": 1,
+          "appreciation": "Fairly good"
+        },
+        {
+          "subjectId": "fre",
+          "code": "FRE",
+          "name": "French",
+          "coefficient": 3,
+          "teacher": "Essomba Julien",
+          "average": 12.5,
+          "points": 37.5,
+          "rank": 1,
+          "appreciation": "Fairly good"
+        },
+        {
+          "subjectId": "phy",
+          "code": "PHY",
+          "name": "Physics",
+          "coefficient": 2,
+          "teacher": "Tabi Emmanuel",
+          "average": 15.5,
+          "points": 31,
+          "rank": 1,
+          "appreciation": "Good"
+        },
+        {
+          "subjectId": "chem",
+          "code": "CHEM",
+          "name": "Chemistry",
+          "coefficient": 2,
+          "teacher": "Fon Rita",
+          "average": 12.75,
+          "points": 25.5,
+          "rank": 2,
+          "appreciation": "Fairly good"
+        },
+        {
+          "subjectId": "civ",
+          "code": "CIV",
+          "name": "Citizenship Education",
+          "coefficient": 1,
+          "teacher": null,
+          "average": 17.5,
+          "points": 17.5,
+          "rank": 1,
+          "appreciation": "Very good"
+        }
+      ],
+      "totalCoefficient": 16,
+      "totalPoints": 224.5,
+      "average": 14.03,
+      "rank": 1,
+      "passed": true,
+      "appreciation": "Good"
+    },
+    "stats": {
+      "size": 4,
+      "classified": 4,
+      "classAverage": 11.18,
+      "highest": 14.03,
+      "lowest": 7.43,
+      "passed": 2,
+      "passRate": 50
+    },
+    "subjectStats": [
+      {
+        "subjectId": "math",
+        "code": "MATH",
+        "name": "Mathematics",
+        "classAverage": 12.25,
+        "highest": 18,
+        "lowest": 6.5
+      },
+      {
+        "subjectId": "eng",
+        "code": "ENG",
+        "name": "English Language",
+        "classAverage": 10.56,
+        "highest": 12.5,
+        "lowest": 8.5
+      },
+      {
+        "subjectId": "fre",
+        "code": "FRE",
+        "name": "French",
+        "classAverage": 10.69,
+        "highest": 12.5,
+        "lowest": 9
+      },
+      {
+        "subjectId": "phy",
+        "code": "PHY",
+        "name": "Physics",
+        "classAverage": 10.5,
+        "highest": 15.5,
+        "lowest": 5.5
+      },
+      {
+        "subjectId": "chem",
+        "code": "CHEM",
+        "name": "Chemistry",
+        "classAverage": 11.13,
+        "highest": 15.5,
+        "lowest": 6.75
+      },
+      {
+        "subjectId": "civ",
+        "code": "CIV",
+        "name": "Citizenship Education",
+        "classAverage": 14,
+        "highest": 17.5,
+        "lowest": 11
+      }
+    ]
+  },
+  {
+    "school": {
+      "name": "Northfield Bilingual College"
+    },
+    "year": {
+      "id": "year-2026-2027",
+      "name": "2026-2027"
+    },
+    "term": {
+      "id": "term-1",
+      "name": "First Term"
+    },
+    "section": {
+      "id": "form-1-a",
+      "label": "Form 1 A"
+    },
+    "result": {
+      "student": {
+        "studentId": "st-2",
+        "matricule": "NF26-0002",
+        "fullName": "Bih Clarisse"
+      },
+      "subjects": [
+        {
+          "subjectId": "math",
+          "code": "MATH",
+          "name": "Mathematics",
+          "coefficient": 4,
+          "teacher": "Ngwa Brenda",
+          "average": 18,
+          "points": 72,
+          "rank": 1,
+          "appreciation": "Excellent"
+        },
+        {
+          "subjectId": "eng",
+          "code": "ENG",
+          "name": "English Language",
+          "coefficient": 4,
+          "teacher": "Mbah Grace",
+          "average": 9.75,
+          "points": 39,
+          "rank": 3,
+          "appreciation": "Weak"
+        },
+        {
+          "subjectId": "fre",
+          "code": "FRE",
+          "name": "French",
+          "coefficient": 3,
+          "teacher": "Essomba Julien",
+          "average": 11.5,
+          "points": 34.5,
+          "rank": 2,
+          "appreciation": "Average"
+        },
+        {
+          "subjectId": "phy",
+          "code": "PHY",
+          "name": "Physics",
+          "coefficient": 2,
+          "teacher": "Tabi Emmanuel",
+          "average": 13.5,
+          "points": 27,
+          "rank": 2,
+          "appreciation": "Fairly good"
+        },
+        {
+          "subjectId": "chem",
+          "code": "CHEM",
+          "name": "Chemistry",
+          "coefficient": 2,
+          "teacher": "Fon Rita",
+          "average": 15.5,
+          "points": 31,
+          "rank": 1,
+          "appreciation": "Good"
+        },
+        {
+          "subjectId": "civ",
+          "code": "CIV",
+          "name": "Citizenship Education",
+          "coefficient": 1,
+          "teacher": null,
+          "average": 11,
+          "points": 11,
+          "rank": 3,
+          "appreciation": "Average"
+        }
+      ],
+      "totalCoefficient": 16,
+      "totalPoints": 214.5,
+      "average": 13.41,
+      "rank": 2,
+      "passed": true,
+      "appreciation": "Fairly good"
+    },
+    "stats": {
+      "size": 4,
+      "classified": 4,
+      "classAverage": 11.18,
+      "highest": 14.03,
+      "lowest": 7.43,
+      "passed": 2,
+      "passRate": 50
+    },
+    "subjectStats": [
+      {
+        "subjectId": "math",
+        "code": "MATH",
+        "name": "Mathematics",
+        "classAverage": 12.25,
+        "highest": 18,
+        "lowest": 6.5
+      },
+      {
+        "subjectId": "eng",
+        "code": "ENG",
+        "name": "English Language",
+        "classAverage": 10.56,
+        "highest": 12.5,
+        "lowest": 8.5
+      },
+      {
+        "subjectId": "fre",
+        "code": "FRE",
+        "name": "French",
+        "classAverage": 10.69,
+        "highest": 12.5,
+        "lowest": 9
+      },
+      {
+        "subjectId": "phy",
+        "code": "PHY",
+        "name": "Physics",
+        "classAverage": 10.5,
+        "highest": 15.5,
+        "lowest": 5.5
+      },
+      {
+        "subjectId": "chem",
+        "code": "CHEM",
+        "name": "Chemistry",
+        "classAverage": 11.13,
+        "highest": 15.5,
+        "lowest": 6.75
+      },
+      {
+        "subjectId": "civ",
+        "code": "CIV",
+        "name": "Citizenship Education",
+        "classAverage": 14,
+        "highest": 17.5,
+        "lowest": 11
+      }
+    ]
+  },
+  {
+    "school": {
+      "name": "Northfield Bilingual College"
+    },
+    "year": {
+      "id": "year-2026-2027",
+      "name": "2026-2027"
+    },
+    "term": {
+      "id": "term-1",
+      "name": "First Term"
+    },
+    "section": {
+      "id": "form-1-a",
+      "label": "Form 1 A"
+    },
+    "result": {
+      "student": {
+        "studentId": "st-3",
+        "matricule": "NF26-0003",
+        "fullName": "Che Daniel"
+      },
+      "subjects": [
+        {
+          "subjectId": "math",
+          "code": "MATH",
+          "name": "Mathematics",
+          "coefficient": 4,
+          "teacher": "Ngwa Brenda",
+          "average": 8.75,
+          "points": 35,
+          "rank": 3,
+          "appreciation": "Weak"
+        },
+        {
+          "subjectId": "eng",
+          "code": "ENG",
+          "name": "English Language",
+          "coefficient": 4,
+          "teacher": "Mbah Grace",
+          "average": 11.5,
+          "points": 46,
+          "rank": 2,
+          "appreciation": "Average"
+        },
+        {
+          "subjectId": "fre",
+          "code": "FRE",
+          "name": "French",
+          "coefficient": 3,
+          "teacher": "Essomba Julien",
+          "average": 9.75,
+          "points": 29.25,
+          "rank": 3,
+          "appreciation": "Weak"
+        },
+        {
+          "subjectId": "phy",
+          "code": "PHY",
+          "name": "Physics",
+          "coefficient": 2,
+          "teacher": "Tabi Emmanuel",
+          "average": 7.5,
+          "points": 15,
+          "rank": 3,
+          "appreciation": "Poor"
+        },
+        {
+          "subjectId": "chem",
+          "code": "CHEM",
+          "name": "Chemistry",
+          "coefficient": 2,
+          "teacher": "Fon Rita",
+          "average": 9.5,
+          "points": 19,
+          "rank": 3,
+          "appreciation": "Weak"
+        },
+        {
+          "subjectId": "civ",
+          "code": "CIV",
+          "name": "Citizenship Education",
+          "coefficient": 1,
+          "teacher": null,
+          "average": 13.5,
+          "points": 13.5,
+          "rank": 2,
+          "appreciation": "Fairly good"
+        }
+      ],
+      "totalCoefficient": 16,
+      "totalPoints": 157.75,
+      "average": 9.86,
+      "rank": 3,
+      "passed": false,
+      "appreciation": "Weak"
+    },
+    "stats": {
+      "size": 4,
+      "classified": 4,
+      "classAverage": 11.18,
+      "highest": 14.03,
+      "lowest": 7.43,
+      "passed": 2,
+      "passRate": 50
+    },
+    "subjectStats": [
+      {
+        "subjectId": "math",
+        "code": "MATH",
+        "name": "Mathematics",
+        "classAverage": 12.25,
+        "highest": 18,
+        "lowest": 6.5
+      },
+      {
+        "subjectId": "eng",
+        "code": "ENG",
+        "name": "English Language",
+        "classAverage": 10.56,
+        "highest": 12.5,
+        "lowest": 8.5
+      },
+      {
+        "subjectId": "fre",
+        "code": "FRE",
+        "name": "French",
+        "classAverage": 10.69,
+        "highest": 12.5,
+        "lowest": 9
+      },
+      {
+        "subjectId": "phy",
+        "code": "PHY",
+        "name": "Physics",
+        "classAverage": 10.5,
+        "highest": 15.5,
+        "lowest": 5.5
+      },
+      {
+        "subjectId": "chem",
+        "code": "CHEM",
+        "name": "Chemistry",
+        "classAverage": 11.13,
+        "highest": 15.5,
+        "lowest": 6.75
+      },
+      {
+        "subjectId": "civ",
+        "code": "CIV",
+        "name": "Citizenship Education",
+        "classAverage": 14,
+        "highest": 17.5,
+        "lowest": 11
+      }
+    ]
+  },
+  {
+    "school": {
+      "name": "Northfield Bilingual College"
+    },
+    "year": {
+      "id": "year-2026-2027",
+      "name": "2026-2027"
+    },
+    "term": {
+      "id": "term-1",
+      "name": "First Term"
+    },
+    "section": {
+      "id": "form-1-a",
+      "label": "Form 1 A"
+    },
+    "result": {
+      "student": {
+        "studentId": "st-4",
+        "matricule": "NF26-0004",
+        "fullName": "Eto Samuel"
+      },
+      "subjects": [
+        {
+          "subjectId": "math",
+          "code": "MATH",
+          "name": "Mathematics",
+          "coefficient": 4,
+          "teacher": "Ngwa Brenda",
+          "average": 6.5,
+          "points": 26,
+          "rank": 4,
+          "appreciation": "Poor"
+        },
+        {
+          "subjectId": "eng",
+          "code": "ENG",
+          "name": "English Language",
+          "coefficient": 4,
+          "teacher": "Mbah Grace",
+          "average": 8.5,
+          "points": 34,
+          "rank": 4,
+          "appreciation": "Weak"
+        },
+        {
+          "subjectId": "fre",
+          "code": "FRE",
+          "name": "French",
+          "coefficient": 3,
+          "teacher": "Essomba Julien",
+          "average": 9,
+          "points": 27,
+          "rank": 4,
+          "appreciation": "Weak"
+        },
+        {
+          "subjectId": "phy",
+          "code": "PHY",
+          "name": "Physics",
+          "coefficient": 2,
+          "teacher": "Tabi Emmanuel",
+          "average": 5.5,
+          "points": 11,
+          "rank": 4,
+          "appreciation": "Poor"
+        },
+        {
+          "subjectId": "chem",
+          "code": "CHEM",
+          "name": "Chemistry",
+          "coefficient": 2,
+          "teacher": "Fon Rita",
+          "average": 6.75,
+          "points": 13.5,
+          "rank": 4,
+          "appreciation": "Poor"
+        },
+        {
+          "subjectId": "civ",
+          "code": "CIV",
+          "name": "Citizenship Education",
+          "coefficient": 1,
+          "teacher": null,
+          "average": null,
+          "points": null,
+          "rank": null,
+          "appreciation": null
+        }
+      ],
+      "totalCoefficient": 15,
+      "totalPoints": 111.5,
+      "average": 7.43,
+      "rank": 4,
+      "passed": false,
+      "appreciation": "Poor"
+    },
+    "stats": {
+      "size": 4,
+      "classified": 4,
+      "classAverage": 11.18,
+      "highest": 14.03,
+      "lowest": 7.43,
+      "passed": 2,
+      "passRate": 50
+    },
+    "subjectStats": [
+      {
+        "subjectId": "math",
+        "code": "MATH",
+        "name": "Mathematics",
+        "classAverage": 12.25,
+        "highest": 18,
+        "lowest": 6.5
+      },
+      {
+        "subjectId": "eng",
+        "code": "ENG",
+        "name": "English Language",
+        "classAverage": 10.56,
+        "highest": 12.5,
+        "lowest": 8.5
+      },
+      {
+        "subjectId": "fre",
+        "code": "FRE",
+        "name": "French",
+        "classAverage": 10.69,
+        "highest": 12.5,
+        "lowest": 9
+      },
+      {
+        "subjectId": "phy",
+        "code": "PHY",
+        "name": "Physics",
+        "classAverage": 10.5,
+        "highest": 15.5,
+        "lowest": 5.5
+      },
+      {
+        "subjectId": "chem",
+        "code": "CHEM",
+        "name": "Chemistry",
+        "classAverage": 11.13,
+        "highest": 15.5,
+        "lowest": 6.75
+      },
+      {
+        "subjectId": "civ",
+        "code": "CIV",
+        "name": "Citizenship Education",
+        "classAverage": 14,
+        "highest": 17.5,
+        "lowest": 11
+      }
+    ]
+  }
+]
