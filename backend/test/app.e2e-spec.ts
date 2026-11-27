@@ -2545,6 +2545,39 @@ describe('YESE API (e2e)', () => {
         expect((await exams.get(`/results/annual?sectionId=${other}`).expect(404)).body.error.code).toBe('SECTION_NOT_FOUND');
         expect((await exams.get(`${url}&yearId=${other}`).expect(404)).body.error.code).toBe('YEAR_NOT_FOUND');
       });
+
+      it('term summary: figures of every class and subject, from the published copy once published', async () => {
+        const s = await school();
+        const teacher = api(await as('teacher@northfield.school'));
+        const exams = api(await as('exams@northfield.school'));
+        const url = `/results/summary?termId=${s.term.id}`;
+
+        const seq = await create(teacher, s);
+        await save(teacher, seq.id, [[s.ada.id, 16], [s.bih.id, 'ABS'], [s.che.id, 8]]).expect(200);
+        await teacher.post(`/assessments/${seq.id}/submit`).expect(201);
+        await exams.post(`/assessments/${seq.id}/validate`).expect(201);
+        await exams.post(`/assessments/${seq.id}/lock`).expect(201);
+
+        const before = (await exams.get(url).expect(200)).body.data;
+        expect(before.term).toEqual({ id: s.term.id, name: 'First Term' });
+        expect(before.classes).toEqual([
+          { sectionId: s.f1a.id, label: 'Form 1 A', state: 'final', size: 3, classified: 2, classAverage: 12, passed: 1, passRate: 50 },
+          { sectionId: s.f1b.id, label: 'Form 1 B', state: 'in_progress', size: 1, classified: 0, classAverage: null, passed: 0, passRate: null },
+        ]);
+        const math = before.subjects.find((x: any) => x.code === 'MATH');
+        expect(math).toMatchObject({ graded: 2, passed: 1, passRate: 50, average: 12 });
+        expect(math.byClass[s.f1a.id]).toBe(12);
+        expect(before.totals).toEqual({ size: 4, classified: 2, passed: 1, passRate: 50, average: 12 });
+
+        await exams.post('/results/publish', { termId: s.term.id, sectionId: s.f1a.id }).expect(201);
+        const after = (await exams.get(url).expect(200)).body.data;
+        expect(after.classes[0]).toMatchObject({ label: 'Form 1 A', state: 'published', classAverage: 12 });
+
+        expect((await teacher.get(url).expect(403)).body.error.code).toBe('PERMISSION_DENIED');
+        await exams.get('/results/summary').expect(400);
+        const other = '99999999-9999-4999-8999-999999999999';
+        expect((await exams.get(`/results/summary?termId=${other}`).expect(404)).body.error.code).toBe('TERM_NOT_FOUND');
+      });
     });
   });
 });

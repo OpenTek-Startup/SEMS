@@ -6,6 +6,7 @@ import { useGetSectionsQuery, useGetYearsQuery } from "@/lib/api/academicApi";
 import {
   useGetAnnualQuery,
   useGetPublicationsQuery,
+  useGetSummaryQuery,
   useGetResultsQuery,
   usePublishResultsMutation,
   useUnpublishResultsMutation,
@@ -14,12 +15,47 @@ import {
 import { PERMISSIONS, useCan } from "@/lib/auth/permissions";
 import { useActiveModules } from "@/lib/modules/useModules";
 import AppHeader from "@/components/layout/AppHeader";
-import { Notice, smallButton, smallPrimaryButton, type Message } from "@/components/academic/academicUi";
+import { Badge, Notice, smallButton, smallPrimaryButton, type Message } from "@/components/academic/academicUi";
 
 const selectClass =
   "mt-1 h-10 w-full rounded-lg border border-line bg-white px-2 text-sm text-ink outline-none focus:border-brand focus:ring-2 focus:ring-brand/20";
 
 const fmt = (v: number | null) => (v === null ? "—" : v.toFixed(2));
+const pct = (v: number | null) => (v === null ? "—" : `${v}%`);
+
+type View = "term" | "year" | "summary";
+
+/** One CSV field: quoted when it holds a comma, a quote or a line break. */
+function csvField(value: string | number | null): string {
+  const text = value === null ? "" : String(value);
+  return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+}
+
+/** Downloads the term results of the class shown as a CSV file (opens in Excel). */
+function downloadCsv(r: SectionResults) {
+  const subjects = r.results.students[0]?.subjects ?? [];
+  const rows: (string | number | null)[][] = [
+    ["Rank", "Matricule", "Student", ...subjects.map((s) => `${s.code} (x${s.coefficient})`), "Average", "Appreciation"],
+    ...r.results.students.map((st) => [
+      st.rank,
+      st.student.matricule,
+      st.student.fullName,
+      ...st.subjects.map((l) => l.average),
+      st.average,
+      st.appreciation ?? "Not classified",
+    ]),
+    ["", "", "Class average", ...r.results.subjects.map((s) => s.classAverage), r.results.stats.classAverage, ""],
+  ];
+  const text = rows.map((row) => row.map(csvField).join(",")).join("\r\n");
+  // The byte order mark lets Excel read the accents correctly.
+  const blob = new Blob(["\uFEFF" + text], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `results ${r.section.label} ${r.term.name} ${r.year.name}${r.provisional ? " (provisional)" : ""}.csv`;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
 
 /**
  * /results — term results of a section (module "results", needs results.compute):
@@ -38,7 +74,7 @@ export default function ResultsBoard() {
   const [termId, setTermId] = useState("");
   const [sectionId, setSectionId] = useState("");
   const [provisional, setProvisional] = useState(false);
-  const [view, setView] = useState<"term" | "year">("term");
+  const [view, setView] = useState<View>("term");
   const term = termId || year?.terms.find((t) => t.isCurrent)?.id || year?.terms[0]?.id || "";
   const section = sectionId || sections.data?.[0]?.id || "";
   const results = useGetResultsQuery(
@@ -61,10 +97,17 @@ export default function ResultsBoard() {
       <main className="mx-auto w-full max-w-7xl flex-1 px-6 py-8">
         <div className="flex flex-wrap items-end justify-between gap-3">
           <h1 className="text-2xl font-semibold">Results</h1>
-          {r && (
-            <button type="button" className={`${smallButton} print:hidden`} onClick={() => window.print()}>
-              Print
-            </button>
+          {((view === "term" && r) || view === "summary") && (
+            <div className="flex gap-2 print:hidden">
+              {view === "term" && r && (
+                <button type="button" className={smallButton} onClick={() => downloadCsv(r)}>
+                  Download CSV
+                </button>
+              )}
+              <button type="button" className={smallButton} onClick={() => window.print()}>
+                Print
+              </button>
+            </div>
           )}
         </div>
         {blocked ? (
@@ -80,14 +123,15 @@ export default function ResultsBoard() {
         ) : (
           <>
             <div className="mt-4 flex flex-wrap items-end gap-3 print:hidden">
-              <label className="block w-40 text-xs font-medium text-muted">
+              <label className="block w-48 text-xs font-medium text-muted">
                 Show
-                <select value={view} onChange={(e) => setView(e.target.value as "term" | "year")} className={selectClass}>
+                <select value={view} onChange={(e) => setView(e.target.value as View)} className={selectClass}>
                   <option value="term">One term</option>
                   <option value="year">The whole year</option>
+                  <option value="summary">School summary</option>
                 </select>
               </label>
-              {view === "term" && (
+              {view !== "year" && (
               <label className="block w-48 text-xs font-medium text-muted">
                 Term
                 <select value={term} onChange={(e) => setTermId(e.target.value)} className={selectClass}>
@@ -99,6 +143,7 @@ export default function ResultsBoard() {
                 </select>
               </label>
               )}
+              {view !== "summary" && (
               <label className="block w-48 text-xs font-medium text-muted">
                 Class
                 <select value={section} onChange={(e) => setSectionId(e.target.value)} className={selectClass}>
@@ -109,6 +154,7 @@ export default function ResultsBoard() {
                   ))}
                 </select>
               </label>
+              )}
               {view === "term" && (
                 <label className="flex h-10 items-center gap-2 text-sm">
                   <input type="checkbox" checked={provisional} onChange={(e) => setProvisional(e.target.checked)} />
@@ -118,6 +164,7 @@ export default function ResultsBoard() {
             </div>
 
             {view === "year" && section && <AnnualView sectionId={section} />}
+            {view === "summary" && <SummaryView termId={term} />}
 
             {view === "term" && overview.data && overview.data.sections.length > 0 && (
               <p className="mt-4 text-xs text-muted print:hidden">
@@ -384,6 +431,118 @@ function AnnualView({ sectionId }: { sectionId: string }) {
           </table>
         </div>
       )}
+    </>
+  );
+}
+
+const STATE_LABEL = {
+  published: { text: "Published", tone: "ok" },
+  final: { text: "Final, not published", tone: "brand" },
+  in_progress: { text: "Marks in progress", tone: "muted" },
+} as const;
+
+/** The school's figures for a term: each class, each subject over every class, and the totals. */
+function SummaryView({ termId }: { termId: string }) {
+  const summary = useGetSummaryQuery(termId, { skip: !termId });
+  const sm = summary.data;
+  if (summary.isLoading) return <p className="mt-6 text-sm text-muted">Computing…</p>;
+  if (summary.error) {
+    return (
+      <p role="alert" className="mt-6 text-sm text-err">
+        {apiErrorMessage(summary.error)}
+      </p>
+    );
+  }
+  if (!sm) return null;
+  if (sm.classes.length === 0) {
+    return <p className="mt-6 rounded-lg bg-ground p-4 text-sm text-muted">No class has students for this term yet.</p>;
+  }
+  const t = sm.totals;
+  return (
+    <>
+      <p className="mt-6 text-sm">
+        <strong>{sm.term.name} · whole school</strong>
+      </p>
+      <p className="mt-1 text-sm text-muted">
+        {t.classified} of {t.size} students classified · school average {fmt(t.average)} · {t.passed} at 10 or above (
+        {pct(t.passRate)}). Published classes use their published copy; the others count only their locked assessments.
+      </p>
+
+      <h2 className="mt-6 text-sm font-semibold uppercase tracking-wider text-muted">Classes</h2>
+      <div className="mt-2 overflow-x-auto rounded-xl border border-line bg-white">
+        <table className="w-full text-left text-sm">
+          <thead className="border-b border-line bg-ground text-xs uppercase tracking-wider text-muted">
+            <tr>
+              <th className="px-3 py-2 font-semibold">Class</th>
+              <th className="px-3 py-2 font-semibold">Status</th>
+              <th className="px-3 py-2 text-right font-semibold">Students</th>
+              <th className="px-3 py-2 text-right font-semibold">Classified</th>
+              <th className="px-3 py-2 text-right font-semibold">Class average</th>
+              <th className="px-3 py-2 text-right font-semibold">At 10 or above</th>
+              <th className="px-3 py-2 text-right font-semibold">Pass rate</th>
+            </tr>
+          </thead>
+          <tbody>
+            {sm.classes.map((c) => (
+              <tr key={c.sectionId} className="border-b border-line last:border-0">
+                <td className="px-3 py-1.5 font-medium">{c.label}</td>
+                <td className="px-3 py-1.5">
+                  <Badge tone={STATE_LABEL[c.state].tone}>{STATE_LABEL[c.state].text}</Badge>
+                </td>
+                <td className="px-3 py-1.5 text-right font-mono">{c.size}</td>
+                <td className="px-3 py-1.5 text-right font-mono">{c.classified}</td>
+                <td className={`px-3 py-1.5 text-right font-mono ${c.classAverage !== null && c.classAverage < 10 ? "text-err" : ""}`}>
+                  {fmt(c.classAverage)}
+                </td>
+                <td className="px-3 py-1.5 text-right font-mono">{c.passed}</td>
+                <td className="px-3 py-1.5 text-right font-mono">{pct(c.passRate)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <h2 className="mt-6 text-sm font-semibold uppercase tracking-wider text-muted">Subjects</h2>
+      <div className="mt-2 overflow-x-auto rounded-xl border border-line bg-white">
+        <table className="w-full text-left text-sm">
+          <thead className="border-b border-line bg-ground text-xs uppercase tracking-wider text-muted">
+            <tr>
+              <th className="px-3 py-2 font-semibold">Subject</th>
+              {sm.classes.map((c) => (
+                <th key={c.sectionId} className="px-2 py-2 text-right font-semibold">
+                  {c.label}
+                </th>
+              ))}
+              <th className="px-3 py-2 text-right font-semibold">School</th>
+              <th className="px-3 py-2 text-right font-semibold">Marked</th>
+              <th className="px-3 py-2 text-right font-semibold">Pass rate</th>
+            </tr>
+          </thead>
+          <tbody>
+            {sm.subjects.map((s) => (
+              <tr key={s.subjectId} className="border-b border-line last:border-0">
+                <td className="px-3 py-1.5" title={s.name}>
+                  <span className="font-mono text-xs text-muted">{s.code}</span> {s.name}
+                </td>
+                {sm.classes.map((c) => (
+                  <td key={c.sectionId} className="px-2 py-1.5 text-right font-mono">
+                    {c.sectionId in s.byClass ? fmt(s.byClass[c.sectionId]) : ""}
+                  </td>
+                ))}
+                <td className={`px-3 py-1.5 text-right font-mono font-semibold ${s.average !== null && s.average < 10 ? "text-err" : ""}`}>
+                  {fmt(s.average)}
+                </td>
+                <td className="px-3 py-1.5 text-right font-mono">{s.graded}</td>
+                <td className="px-3 py-1.5 text-right font-mono">{pct(s.passRate)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p className="mt-2 text-xs text-muted">
+        Class columns: the class average of the subject (blank when the class does not take it). School: the mean of every
+        student&apos;s subject average. Pass rate: students at 10 or above in the subject.
+      </p>
     </>
   );
 }

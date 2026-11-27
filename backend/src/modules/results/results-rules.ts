@@ -463,3 +463,118 @@ export function computeAnnual(terms: readonly TermOfYear[]): AnnualResults {
     },
   };
 }
+
+// ------------------------------------------------- term summary (basic reporting)
+
+/** published: frozen copy; final: every assessment locked; in_progress: some marks still open. */
+export type SummaryState = 'published' | 'final' | 'in_progress';
+
+export interface SummaryClassInput {
+  sectionId: string;
+  label: string;
+  state: SummaryState;
+  results: TermResults;
+}
+
+export interface SummaryClass {
+  sectionId: string;
+  label: string;
+  state: SummaryState;
+  size: number;
+  classified: number;
+  classAverage: number | null;
+  passed: number;
+  passRate: number | null;
+}
+
+export interface SummarySubject {
+  subjectId: string;
+  code: string;
+  name: string;
+  /** students with an average in this subject, all classes together */
+  graded: number;
+  /** of them, at or above the pass mark */
+  passed: number;
+  passRate: number | null;
+  /** mean of the students' subject averages, 2 decimals */
+  average: number | null;
+  /** class average of the subject, by sectionId (absent: the class does not take it) */
+  byClass: Record<string, number | null>;
+}
+
+export interface TermSummary {
+  classes: SummaryClass[];
+  subjects: SummarySubject[];
+  totals: { size: number; classified: number; passed: number; passRate: number | null; average: number | null };
+}
+
+/** Percentage with 1 decimal; null when there is nobody to count. */
+export function percent(part: number, whole: number): number | null {
+  return whole === 0 ? null : Math.round((part / whole) * 1000) / 10;
+}
+
+const mean2 = (values: readonly number[]): number | null =>
+  values.length === 0 ? null : round2(values.reduce((a, b) => a + b, 0) / values.length);
+
+/**
+ * The school's figures for one term: one line per class, one line per subject
+ * over every class, and the school totals. Works the same on live results and
+ * on published copies (it only reads the students' lines).
+ */
+export function termSummary(classes: readonly SummaryClassInput[]): TermSummary {
+  const subjects = new Map<string, { code: string; name: string; values: number[]; byClass: Record<string, number | null> }>();
+  const allAverages: number[] = [];
+  let size = 0;
+  let passed = 0;
+
+  const lines: SummaryClass[] = classes.map((c) => {
+    const s = c.results.stats;
+    size += s.size;
+    passed += s.passed;
+    for (const st of c.results.students) if (st.average !== null) allAverages.push(st.average);
+    for (const subject of c.results.subjects) {
+      const entry = subjects.get(subject.subjectId) ?? { code: subject.code, name: subject.name, values: [], byClass: {} };
+      entry.byClass[c.sectionId] = subject.classAverage;
+      subjects.set(subject.subjectId, entry);
+    }
+    for (const st of c.results.students) {
+      for (const line of st.subjects) {
+        if (line.average !== null) subjects.get(line.subjectId)?.values.push(line.average);
+      }
+    }
+    return {
+      sectionId: c.sectionId,
+      label: c.label,
+      state: c.state,
+      size: s.size,
+      classified: s.classified,
+      classAverage: s.classAverage,
+      passed: s.passed,
+      passRate: s.passRate,
+    };
+  });
+
+  return {
+    classes: lines,
+    subjects: [...subjects.entries()].map(([subjectId, e]) => {
+      const ok = e.values.filter((v) => v >= PASS_MARK).length;
+      return {
+        subjectId,
+        code: e.code,
+        name: e.name,
+        graded: e.values.length,
+        passed: ok,
+        passRate: percent(ok, e.values.length),
+        average: mean2(e.values),
+        byClass: e.byClass,
+      };
+    }),
+    totals: {
+      size,
+      classified: allAverages.length,
+      passed,
+      passRate: percent(passed, allAverages.length),
+      average: mean2(allAverages),
+    },
+  };
+}

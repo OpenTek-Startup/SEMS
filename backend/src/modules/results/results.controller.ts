@@ -13,6 +13,7 @@ const ip = (req: Request) => req.ip ?? null;
  *   GET  /results/report-cards?termId=&sectionId=      one report card per student (published copy if any)  (results.reportcard.generate)
  *   GET  /results/publications?termId=                 every section of the term with its publication state  (results.compute)
  *   GET  /results/annual?sectionId=&yearId=            year averages over the terms, ranks, promotion decisions  (results.compute)
+ *   GET  /results/summary?termId=                      the school's figures for the term: classes, subjects, totals  (results.compute)
  *   POST /results/publish     { termId, sectionId }            publish or republish final results  (results.publish)
  *   POST /results/unpublish   { termId, sectionId, reason }    withdraw published results  (results.publish)
  *
@@ -48,7 +49,13 @@ export class ResultsController {
     return this.results.annual(query.sectionId, query.yearId);
   }
 
-  @Post('publish')
+  @Get('summary')
+  @RequirePermission('results.compute')
+  summary(@Query() query: TermQueryDto) {
+    return this.results.summary(query.termId);
+  }
+
+    @Post('publish')
   @RequirePermission('results.publish')
   publish(@CurrentAuth() auth: AuthContext, @Body() dto: PublishDto, @Req() req: Request) {
     return this.results.publish(auth, dto.termId, dto.sectionId, ip(req));

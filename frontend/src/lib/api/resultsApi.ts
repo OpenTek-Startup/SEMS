@@ -79,6 +79,32 @@ export interface AnnualResults {
   stats: { size: number; classified: number; classAverage: number | null; promoted: number; repeat: number };
 }
 
+/** The school's figures for a term (GET /results/summary). */
+export interface TermSummary {
+  term: { id: string; name: string };
+  classes: {
+    sectionId: string;
+    label: string;
+    state: "published" | "final" | "in_progress";
+    size: number;
+    classified: number;
+    classAverage: number | null;
+    passed: number;
+    passRate: number | null;
+  }[];
+  subjects: {
+    subjectId: string;
+    code: string;
+    name: string;
+    graded: number;
+    passed: number;
+    passRate: number | null;
+    average: number | null;
+    byClass: Record<string, number | null>;
+  }[];
+  totals: { size: number; classified: number; passed: number; passRate: number | null; average: number | null };
+}
+
 export interface PublicationOverview {
   term: { id: string; name: string };
   sections: { sectionId: string; label: string; publication: PublicationInfo | null }[];
@@ -93,6 +119,11 @@ export const resultsApi = resultsBase.injectEndpoints({
       query: ({ termId, sectionId, provisional }) =>
         `/results?termId=${termId}&sectionId=${sectionId}${provisional ? "&provisional=true" : ""}`,
       transformResponse: (response: ApiSuccess<SectionResults>) => response.data,
+      providesTags: ["Assessment", "Enrollment", "Academic", "Publication"],
+    }),
+    getSummary: build.query<TermSummary, string>({
+      query: (termId) => `/results/summary?termId=${termId}`,
+      transformResponse: (response: ApiSuccess<TermSummary>) => response.data,
       providesTags: ["Assessment", "Enrollment", "Academic", "Publication"],
     }),
     getAnnual: build.query<AnnualResults, string>({
@@ -121,6 +152,7 @@ export const resultsApi = resultsBase.injectEndpoints({
 export const {
   useGetResultsQuery,
   useGetAnnualQuery,
+  useGetSummaryQuery,
   useGetPublicationsQuery,
   usePublishResultsMutation,
   useUnpublishResultsMutation,
