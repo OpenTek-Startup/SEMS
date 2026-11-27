@@ -13,6 +13,7 @@
  *  - demo assessments for Northfield: Sequences 1 and 2 of the First Term, for every assigned class
  *  - demo students for Northfield, enrolled in Form 1 A, Form 1 B and Form 2 A (2026-2027)
  *  - demo marks: Sequence 1 marked and locked (so Results shows a ranking), Sequence 2 being marked
+ *  - Form 1 A complete for the First Term (both sequences locked), so its results can be published in a demo
  *
  * Passwords: set SEED_DEFAULT_PASSWORD in .env to choose one. Otherwise a random
  * password is generated and printed ONCE at the end. Every seeded account must
@@ -410,6 +411,21 @@ function noise(text: string): number {
   return ((h >>> 0) % 10000) / 10000;
 }
 
+/** One demo mark: the same student does well or badly across subjects, a few are absent. */
+function demoMark(tenantId: string, a: { id: string; maxScore: number }, studentId: string) {
+  const ability = noise(studentId);
+  const luck = noise(`${studentId}|${a.id}`);
+  const absent = luck > 0.97;
+  const raw = 4 + ability * 11 + luck * 5; // 4 to 20
+  return {
+    tenantId,
+    assessmentId: a.id,
+    studentId,
+    absent,
+    score: absent ? null : Math.min(a.maxScore, Math.round(raw * 2) / 2),
+  };
+}
+
 /**
  * Demo marks for Northfield's First Term. Sequence 1: every student marked
  * (a few absent), then locked. Sequence 2: marked except the last students
@@ -435,19 +451,7 @@ async function seedMarks(tenantId: string) {
     const first = a.name === DEMO_SEQUENCES[0].name;
     const marked = first ? enrolled : enrolled.slice(0, Math.max(0, enrolled.length - 3));
     await prisma.mark.createMany({
-      data: marked.map((e) => {
-        const ability = noise(e.studentId); // the same student does well or badly across subjects
-        const luck = noise(`${e.studentId}|${a.id}`);
-        const absent = luck > 0.97;
-        const raw = 4 + ability * 11 + luck * 5; // 4 to 20
-        return {
-          tenantId,
-          assessmentId: a.id,
-          studentId: e.studentId,
-          absent,
-          score: absent ? null : Math.min(a.maxScore, Math.round(raw * 2) / 2),
-        };
-      }),
+      data: marked.map((e) => demoMark(tenantId, a, e.studentId)),
       skipDuplicates: true,
     });
     if (first) {
@@ -456,6 +460,43 @@ async function seedMarks(tenantId: string) {
         data: { status: 'locked', submittedAt: now, validatedAt: now, lockedAt: now },
       });
     }
+  }
+}
+
+/** The demo class whose First Term is complete, so its results can be published during a demo. */
+const READY_SECTION = { cls: 'Form 1', section: 'A' };
+
+/**
+ * Completes the First Term of Form 1 A: its open sequences get the missing
+ * marks and are locked. The results stay unpublished: publishing is done in the demo.
+ * Assessments the school has already submitted, validated or locked are left alone.
+ */
+async function seedReadyClass(tenantId: string) {
+  const year = await prisma.academicYear.findFirst({ where: { tenantId, name: DEMO_YEAR.name }, select: { id: true } });
+  const schoolClass = await prisma.schoolClass.findFirst({ where: { tenantId, name: READY_SECTION.cls }, select: { id: true } });
+  if (!year || !schoolClass) return;
+  const section = await prisma.section.findFirst({ where: { classId: schoolClass.id, name: READY_SECTION.section }, select: { id: true } });
+  if (!section) return;
+  const enrolled = await prisma.enrollment.findMany({
+    where: { academicYearId: year.id, sectionId: section.id, status: 'active' },
+    select: { studentId: true },
+  });
+  if (enrolled.length === 0) return;
+  const open = await prisma.assessment.findMany({
+    where: { tenantId, academicYearId: year.id, sectionId: section.id, status: 'open', name: { in: DEMO_SEQUENCES.map((q) => q.name) } },
+    select: { id: true, maxScore: true },
+  });
+  const now = new Date();
+  for (const a of open) {
+    // (assessment, student) is unique: marks already entered are kept.
+    await prisma.mark.createMany({
+      data: enrolled.map((e) => demoMark(tenantId, a, e.studentId)),
+      skipDuplicates: true,
+    });
+    await prisma.assessment.update({
+      where: { id: a.id },
+      data: { status: 'locked', submittedAt: now, validatedAt: now, lockedAt: now },
+    });
   }
 }
 
@@ -567,6 +608,7 @@ async function main() {
       await seedAssessments(tenant.id);
       await seedStudents(tenant.id);
       await seedMarks(tenant.id);
+      await seedReadyClass(tenant.id);
 
       // A teacher account for Ngwa Brenda, linked to her staff record if that record has no account yet.
       const t = DEMO_TEACHER_ACCOUNT;
