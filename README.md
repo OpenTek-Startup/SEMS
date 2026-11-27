@@ -43,8 +43,9 @@ The home page shows whether the frontend, backend and database are all connected
   under the sign-in form: type `sunrise`, or leave it empty for the platform
   (Super Admin). The choice is kept in this browser only.
 - Seeded accounts: `admin@northfield.school`, `admin@sunrise.school`, the
-  Northfield teacher `b.ngwa@northfield.school` (Mathematics), and the platform
-  Super Admin `superadmin@yese.local` (signs in with no school). They all use the
+  Northfield teacher `b.ngwa@northfield.school` (Mathematics), the Northfield
+  Exam Officer `exams@northfield.school`, and the platform Super Admin
+  `superadmin@yese.local` (signs in with no school). They all use the
   password printed by `pnpm db:seed` and must change it at first sign-in.
 - Sessions end after 15 minutes without activity (`SESSION_IDLE_MINUTES`).
 - Every backend route needs a signed-in user unless it is marked `@Public()`.
@@ -67,8 +68,14 @@ coefficients, absent students left out of the average, pass mark 10/20, shared
 ranks (1, 2, 2, 4). The rules live in the `*-rules.ts` files and are unit-tested.
 `backend/src/modules/results/REPORT_CARD_DATA.md` describes the report card data.
 
-The demo seed leaves Form 1 A with a complete First Term (ready to publish) and
-the other classes in the middle of Sequence 2.
+The demo seed sets up two configurations:
+
+- **Northfield** (general secondary): every module is active. Form 1 A has a
+  complete First Term (ready to publish); the other classes are in the middle
+  of Sequence 2.
+- **Sunrise** (technical and commercial): only Students, Staff and Academic
+  structure are active, with its own classes, subjects, staff and students.
+  Enrollment, Assessment and Results stay off, so their pages are hidden.
 
 ## Useful commands
 
