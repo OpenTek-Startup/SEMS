@@ -23,7 +23,10 @@ import {
   type ReportCardData,
   type ResultChange,
   type ResultSubject,
+  type SummaryClassInput,
   type TermResults,
+  type TermSummary,
+  termSummary,
   toReportCards,
 } from './results-rules';
 
@@ -240,6 +243,33 @@ export class ResultsService {
         return { sectionId: s.id, label: s.label, publication: p ? infoOf(p) : null };
       }),
     };
+  }
+
+  /**
+   * The school's figures for a term (basic reporting): each class with students,
+   * from its published copy, or from its locked assessments when not published.
+   */
+  async summary(termId: string): Promise<{ term: { id: string; name: string } } & TermSummary> {
+    this.requireSchool();
+    const term = await this.findTerm(termId);
+    const [classes, sections] = await Promise.all([
+      this.db.schoolClass.findMany({ select: { id: true, name: true, level: true } }),
+      this.db.section.findMany({ select: { id: true, classId: true, name: true, capacity: true } }),
+    ]);
+    const lines: SummaryClassInput[] = [];
+    for (const s of toSectionList(classes, sections)) {
+      const published = await this.findPublication(termId, s.id);
+      if (published) {
+        const copy = published.snapshot as unknown as SectionResults;
+        lines.push({ sectionId: s.id, label: s.label, state: 'published', results: copy.results });
+        continue;
+      }
+      const r = await this.compute(termId, s.id, false);
+      if (r.results.stats.size === 0) continue;
+      const final = r.pending === 0 && r.counted.length > 0;
+      lines.push({ sectionId: s.id, label: s.label, state: final ? 'final' : 'in_progress', results: r.results });
+    }
+    return { term: { id: term.id, name: term.name }, ...termSummary(lines) };
   }
 
   /** Publishes (or republishes) the final results of a section for a term. */

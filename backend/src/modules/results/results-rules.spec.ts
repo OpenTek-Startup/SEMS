@@ -10,6 +10,8 @@ import {
   checkPublishable,
   changesSincePublication,
   computeAnnual,
+  percent,
+  termSummary,
   type ResultAssessment,
   type ResultMark,
   type TermInput,
@@ -274,5 +276,57 @@ describe('annual results', () => {
     expect(eto).toMatchObject({ average: 6.86, decision: 'repeat', appreciation: 'Poor' });
     expect(year.stats).toMatchObject({ promoted: 3, repeat: 1 });
     expect(computeAnnual([])).toEqual({ terms: [], students: [], stats: { size: 0, classified: 0, classAverage: null, promoted: 0, repeat: 0 } });
+  });
+});
+
+describe('term summary', () => {
+  // Form 1 A: the section above. Form 1 B: two students, Mathematics only.
+  const a = computeTerm(input);
+  const b = computeTerm({
+    subjects: [MATH],
+    assessments: assessments.filter((x) => x.subjectId === 'math'),
+    students: [
+      { studentId: 'gab', matricule: 'NF-006', fullName: 'Gaba Ruth' },
+      { studentId: 'hil', matricule: 'NF-007', fullName: 'Hilary Ivan' },
+    ],
+    marks: [mark('m1', 'gab', 20), mark('m2', 'gab', 40), mark('m1', 'hil', 8), mark('m2', 'hil', 16)],
+  });
+
+  it('gives one line per class, per subject over every class, and the school totals', () => {
+    const summary = termSummary([
+      { sectionId: 'f1a', label: 'Form 1 A', state: 'published', results: a },
+      { sectionId: 'f1b', label: 'Form 1 B', state: 'in_progress', results: b },
+    ]);
+    expect(summary.classes).toEqual([
+      { sectionId: 'f1a', label: 'Form 1 A', state: 'published', size: 5, classified: 4, classAverage: 12.33, passed: 3, passRate: 75 },
+      { sectionId: 'f1b', label: 'Form 1 B', state: 'in_progress', size: 2, classified: 2, classAverage: 14, passed: 1, passRate: 50 },
+    ]);
+    // MATH: 15.33, 18, 15.33, 6 in Form 1 A; 20 and 8 in Form 1 B.
+    expect(summary.subjects[0]).toEqual({
+      subjectId: 'math',
+      code: 'MATH',
+      name: 'Mathematics',
+      graded: 6,
+      passed: 4,
+      passRate: 66.7,
+      average: 13.78,
+      byClass: { f1a: 13.67, f1b: 14 },
+    });
+    // ENG and CIV are taken in Form 1 A only; Eto was absent in CIV.
+    expect(summary.subjects.slice(1).map((s) => [s.code, s.graded, s.passed, s.passRate, s.average, Object.keys(s.byClass)])).toEqual([
+      ['ENG', 4, 2, 50, 10.25, ['f1a']],
+      ['CIV', 3, 3, 100, 15.33, ['f1a']],
+    ]);
+    // 14.42, 14.42, 13.63, 6.86, 20, 8 -> 12.89; 4 of 6 at 10 or above.
+    expect(summary.totals).toEqual({ size: 7, classified: 6, passed: 4, passRate: 66.7, average: 12.89 });
+  });
+
+  it('an empty school gives empty figures', () => {
+    expect(termSummary([])).toEqual({
+      classes: [],
+      subjects: [],
+      totals: { size: 0, classified: 0, passed: 0, passRate: null, average: null },
+    });
+    expect(percent(1, 3)).toBe(33.3);
   });
 });

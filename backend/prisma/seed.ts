@@ -13,6 +13,10 @@
  *  - demo assessments for Northfield: Sequences 1 and 2 of the First Term, for every assigned class
  *  - demo students for Northfield, enrolled in Form 1 A, Form 1 B and Form 2 A (2026-2027)
  *  - demo marks: Sequence 1 marked and locked (so Results shows a ranking), Sequence 2 being marked
+ *  - Form 1 A complete for the First Term (both sequences locked), so its results can be published in a demo
+ *  - an Exam Officer account at Northfield (exams@northfield.school)
+ *  - Sunrise, the second configuration: only students, staff and academic structure are active,
+ *    with its own classes, subjects (technical and commercial), staff and students
  *
  * Passwords: set SEED_DEFAULT_PASSWORD in .env to choose one. Otherwise a random
  * password is generated and printed ONCE at the end. Every seeded account must
@@ -178,6 +182,47 @@ const DEMO_TEACHERS: Record<string, string> = {
 /** A demo teacher account, linked to STF-0001, to try "my classes", registers and marks. */
 const DEMO_TEACHER_ACCOUNT = { email: 'b.ngwa@northfield.school', firstName: 'Brenda', lastName: 'Ngwa', staffNumber: 'STF-0001' };
 
+/** An Exam Officer account at Northfield: validates and locks marks, publishes results. */
+const DEMO_EXAM_OFFICER_ACCOUNT = { email: 'exams@northfield.school', firstName: 'Comfort', lastName: 'Ayuk' };
+
+/**
+ * Sunrise, the second demo configuration: a comprehensive (technical and
+ * commercial) college that uses only students, staff and the academic
+ * structure. No enrollment, marks or results: those modules are off.
+ */
+const SUNRISE_ACADEMIC: AcademicSetup = {
+  subjects: [
+    ['MATH', 'Mathematics'],
+    ['ENG', 'English Language'],
+    ['FRE', 'French'],
+    ['ACC', 'Accounting'],
+    ['COM', 'Commerce'],
+    ['TD', 'Technical Drawing'],
+    ['ELEC', 'Electricity'],
+    ['CIV', 'Citizenship Education'],
+  ],
+  classes: [
+    { name: 'Form 1', level: 1, sections: ['Commercial', 'Industrial'], coefficients: { MATH: 3, ENG: 3, FRE: 3, ACC: 2, COM: 2, TD: 2, ELEC: 2, CIV: 1 } },
+    { name: 'Form 2', level: 2, sections: ['Commercial', 'Industrial'], coefficients: { MATH: 3, ENG: 3, FRE: 3, ACC: 2, COM: 2, TD: 2, ELEC: 2, CIV: 1 } },
+    { name: 'Form 3', level: 3, sections: ['Accounting', 'Electricity'], coefficients: { MATH: 3, ENG: 2, FRE: 2, ACC: 4, COM: 3, TD: 3, ELEC: 4, CIV: 1 } },
+  ],
+};
+const SUNRISE_STAFF: typeof DEMO_STAFF = [
+  { staffNumber: 'STF-0001', firstName: 'Joseph', lastName: 'Nfor', position: 'Accounting teacher', category: 'teaching', hireDate: '2016-09-05' },
+  { staffNumber: 'STF-0002', firstName: 'Agnes', lastName: 'Ekane', position: 'Commerce teacher', category: 'teaching', hireDate: '2020-09-07' },
+  { staffNumber: 'STF-0003', firstName: 'Paul', lastName: 'Ngando', position: 'Technical Drawing teacher', category: 'teaching', hireDate: '2019-09-02' },
+  { staffNumber: 'STF-0004', firstName: 'Hope', lastName: 'Asong', position: 'Electricity teacher', category: 'teaching', hireDate: '2021-09-06' },
+  { staffNumber: 'STF-0005', firstName: 'Martin', lastName: 'Ewane', position: 'Workshop technician', category: 'non_teaching', hireDate: '2018-01-08' },
+];
+const SUNRISE_STUDENTS = {
+  groups: [
+    { cls: 'Form 1', section: 'Commercial', count: 12, born: 2014 },
+    { cls: 'Form 1', section: 'Industrial', count: 10, born: 2014 },
+  ],
+  enroll: false, // the enrollment module is off at Sunrise
+  nameOffset: 11,
+};
+
 const SUPER_ADMIN_EMAIL = process.env.SEED_SUPERADMIN_EMAIL ?? 'superadmin@yese.local';
 
 // --------------------------------------------------------------- helpers
@@ -222,8 +267,14 @@ async function grant(tenantId: string, roleId: string, codes: readonly string[],
 
 const day = (value: string) => new Date(`${value}T00:00:00.000Z`);
 
+interface AcademicSetup {
+  subjects: [code: string, name: string][];
+  classes: { name: string; level: number; sections: string[]; coefficients: Record<string, number> }[];
+}
+const NORTHFIELD_ACADEMIC: AcademicSetup = { subjects: DEMO_SUBJECTS, classes: DEMO_CLASSES };
+
 /** Demo academic structure; never overwrites what the school changed. */
-async function seedAcademic(tenantId: string) {
+async function seedAcademic(tenantId: string, setup: AcademicSetup = NORTHFIELD_ACADEMIC) {
   const hasCurrent = await prisma.academicYear.findFirst({ where: { tenantId, isCurrent: true } });
   const year = await prisma.academicYear.upsert({
     where: { tenantId_name: { tenantId, name: DEMO_YEAR.name } },
@@ -239,7 +290,7 @@ async function seedAcademic(tenantId: string) {
   }
 
   const subjectIds = new Map<string, string>();
-  for (const [code, name] of DEMO_SUBJECTS) {
+  for (const [code, name] of setup.subjects) {
     const subject = await prisma.subject.upsert({
       where: { tenantId_code: { tenantId, code } },
       update: {},
@@ -248,7 +299,7 @@ async function seedAcademic(tenantId: string) {
     subjectIds.set(code, subject.id);
   }
 
-  for (const c of DEMO_CLASSES) {
+  for (const c of setup.classes) {
     const schoolClass = await prisma.schoolClass.upsert({
       where: { tenantId_name: { tenantId, name: c.name } },
       update: {},
@@ -274,8 +325,8 @@ async function seedAcademic(tenantId: string) {
 }
 
 /** Demo staff records; never overwrites what the school changed. */
-async function seedStaff(tenantId: string) {
-  for (const s of DEMO_STAFF) {
+async function seedStaff(tenantId: string, staff: typeof DEMO_STAFF = DEMO_STAFF) {
+  for (const s of staff) {
     await prisma.staffMember.upsert({
       where: { tenantId_staffNumber: { tenantId, staffNumber: s.staffNumber } },
       update: {},
@@ -328,19 +379,23 @@ const DEMO_ENROLLMENT: { cls: string; section: string; count: number; born: numb
 ];
 
 /** Demo students and their enrollment; existing matricules and enrollments are kept. */
-async function seedStudents(tenantId: string) {
+async function seedStudents(
+  tenantId: string,
+  options: { groups: typeof DEMO_ENROLLMENT; enroll: boolean; nameOffset: number } = { groups: DEMO_ENROLLMENT, enroll: true, nameOffset: 0 },
+) {
   const year = await prisma.academicYear.findFirst({ where: { tenantId, name: DEMO_YEAR.name }, select: { id: true } });
   if (!year) return;
   let n = 0;
-  for (const group of DEMO_ENROLLMENT) {
+  for (const group of options.groups) {
     const schoolClass = await prisma.schoolClass.findFirst({ where: { tenantId, name: group.cls }, select: { id: true } });
     const section = schoolClass
       ? await prisma.section.findFirst({ where: { classId: schoolClass.id, name: group.section }, select: { id: true } })
       : null;
     for (let i = 0; i < group.count; i++, n++) {
-      const girl = n % 2 === 0;
-      const firstName = (girl ? GIRLS : BOYS)[Math.floor(n / 2) % 15];
-      const lastName = FAMILY[(n * 7) % FAMILY.length];
+      const k = n + options.nameOffset; // another school gets other names
+      const girl = k % 2 === 0;
+      const firstName = (girl ? GIRLS : BOYS)[Math.floor(k / 2) % 15];
+      const lastName = FAMILY[(k * 7) % FAMILY.length];
       const matricule = `STU-${String(n + 1).padStart(4, '0')}`;
       const student = await prisma.student.upsert({
         where: { tenantId_matricule: { tenantId, matricule } },
@@ -351,15 +406,15 @@ async function seedStudents(tenantId: string) {
           firstName,
           lastName,
           gender: girl ? 'female' : 'male',
-          dateOfBirth: day(`${group.born}-${String((n % 12) + 1).padStart(2, '0')}-${String((n % 27) + 1).padStart(2, '0')}`),
-          placeOfBirth: TOWNS[n % TOWNS.length],
-          guardianName: `${lastName} ${girl ? BOYS[(n + 3) % 15] : GIRLS[(n + 5) % 15]}`,
-          guardianPhone: `+237 6${70 + (n % 30)} ${String(10 + (n % 90)).padStart(2, '0')} ${String(20 + ((n * 3) % 80)).padStart(2, '0')} ${String(30 + ((n * 7) % 70)).padStart(2, '0')}`,
+          dateOfBirth: day(`${group.born}-${String((k % 12) + 1).padStart(2, '0')}-${String((k % 27) + 1).padStart(2, '0')}`),
+          placeOfBirth: TOWNS[k % TOWNS.length],
+          guardianName: `${lastName} ${girl ? BOYS[(k + 3) % 15] : GIRLS[(k + 5) % 15]}`,
+          guardianPhone: `+237 6${70 + (k % 30)} ${String(10 + (k % 90)).padStart(2, '0')} ${String(20 + ((k * 3) % 80)).padStart(2, '0')} ${String(30 + ((k * 7) % 70)).padStart(2, '0')}`,
           guardianRelationship: girl ? 'Father' : 'Mother',
           admittedOn: day(DEMO_YEAR.start),
         },
       });
-      if (!section) continue;
+      if (!options.enroll || !section) continue;
       const enrolled = await prisma.enrollment.findFirst({ where: { academicYearId: year.id, studentId: student.id }, select: { id: true } });
       if (!enrolled) {
         await prisma.enrollment.create({
@@ -410,6 +465,21 @@ function noise(text: string): number {
   return ((h >>> 0) % 10000) / 10000;
 }
 
+/** One demo mark: the same student does well or badly across subjects, a few are absent. */
+function demoMark(tenantId: string, a: { id: string; maxScore: number }, studentId: string) {
+  const ability = noise(studentId);
+  const luck = noise(`${studentId}|${a.id}`);
+  const absent = luck > 0.97;
+  const raw = 4 + ability * 11 + luck * 5; // 4 to 20
+  return {
+    tenantId,
+    assessmentId: a.id,
+    studentId,
+    absent,
+    score: absent ? null : Math.min(a.maxScore, Math.round(raw * 2) / 2),
+  };
+}
+
 /**
  * Demo marks for Northfield's First Term. Sequence 1: every student marked
  * (a few absent), then locked. Sequence 2: marked except the last students
@@ -435,19 +505,7 @@ async function seedMarks(tenantId: string) {
     const first = a.name === DEMO_SEQUENCES[0].name;
     const marked = first ? enrolled : enrolled.slice(0, Math.max(0, enrolled.length - 3));
     await prisma.mark.createMany({
-      data: marked.map((e) => {
-        const ability = noise(e.studentId); // the same student does well or badly across subjects
-        const luck = noise(`${e.studentId}|${a.id}`);
-        const absent = luck > 0.97;
-        const raw = 4 + ability * 11 + luck * 5; // 4 to 20
-        return {
-          tenantId,
-          assessmentId: a.id,
-          studentId: e.studentId,
-          absent,
-          score: absent ? null : Math.min(a.maxScore, Math.round(raw * 2) / 2),
-        };
-      }),
+      data: marked.map((e) => demoMark(tenantId, a, e.studentId)),
       skipDuplicates: true,
     });
     if (first) {
@@ -456,6 +514,43 @@ async function seedMarks(tenantId: string) {
         data: { status: 'locked', submittedAt: now, validatedAt: now, lockedAt: now },
       });
     }
+  }
+}
+
+/** The demo class whose First Term is complete, so its results can be published during a demo. */
+const READY_SECTION = { cls: 'Form 1', section: 'A' };
+
+/**
+ * Completes the First Term of Form 1 A: its open sequences get the missing
+ * marks and are locked. The results stay unpublished: publishing is done in the demo.
+ * Assessments the school has already submitted, validated or locked are left alone.
+ */
+async function seedReadyClass(tenantId: string) {
+  const year = await prisma.academicYear.findFirst({ where: { tenantId, name: DEMO_YEAR.name }, select: { id: true } });
+  const schoolClass = await prisma.schoolClass.findFirst({ where: { tenantId, name: READY_SECTION.cls }, select: { id: true } });
+  if (!year || !schoolClass) return;
+  const section = await prisma.section.findFirst({ where: { classId: schoolClass.id, name: READY_SECTION.section }, select: { id: true } });
+  if (!section) return;
+  const enrolled = await prisma.enrollment.findMany({
+    where: { academicYearId: year.id, sectionId: section.id, status: 'active' },
+    select: { studentId: true },
+  });
+  if (enrolled.length === 0) return;
+  const open = await prisma.assessment.findMany({
+    where: { tenantId, academicYearId: year.id, sectionId: section.id, status: 'open', name: { in: DEMO_SEQUENCES.map((q) => q.name) } },
+    select: { id: true, maxScore: true },
+  });
+  const now = new Date();
+  for (const a of open) {
+    // (assessment, student) is unique: marks already entered are kept.
+    await prisma.mark.createMany({
+      data: enrolled.map((e) => demoMark(tenantId, a, e.studentId)),
+      skipDuplicates: true,
+    });
+    await prisma.assessment.update({
+      where: { id: a.id },
+      data: { status: 'locked', submittedAt: now, validatedAt: now, lockedAt: now },
+    });
   }
 }
 
@@ -567,6 +662,7 @@ async function main() {
       await seedAssessments(tenant.id);
       await seedStudents(tenant.id);
       await seedMarks(tenant.id);
+      await seedReadyClass(tenant.id);
 
       // A teacher account for Ngwa Brenda, linked to her staff record if that record has no account yet.
       const t = DEMO_TEACHER_ACCOUNT;
@@ -584,6 +680,25 @@ async function main() {
         });
       }
       if (teacher.created) createdAccounts.push(`${t.email}  (Staff / Teacher, northfield)`);
+
+      // An Exam Officer account, to show a role made by the school.
+      const e = DEMO_EXAM_OFFICER_ACCOUNT;
+      const examRole = await prisma.role.findFirst({ where: { tenantId: tenant.id, name: 'Exam Officer' }, select: { id: true } });
+      if (examRole) {
+        const officer = await upsertUser({ tenantId: tenant.id, email: e.email, firstName: e.firstName, lastName: e.lastName, passwordHash });
+        await prisma.userRole.upsert({
+          where: { userId_roleId: { userId: officer.user.id, roleId: examRole.id } },
+          update: {},
+          create: { userId: officer.user.id, roleId: examRole.id, tenantId: tenant.id },
+        });
+        if (officer.created) createdAccounts.push(`${e.email}  (Exam Officer, northfield)`);
+      }
+    }
+
+    if (s.slug === 'sunrise') {
+      await seedAcademic(tenant.id, SUNRISE_ACADEMIC);
+      await seedStaff(tenant.id, SUNRISE_STAFF);
+      await seedStudents(tenant.id, SUNRISE_STUDENTS);
     }
   }
 
