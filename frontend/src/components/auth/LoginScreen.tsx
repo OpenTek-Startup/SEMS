@@ -1,13 +1,13 @@
 "use client";
 
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useState, useSyncExternalStore, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { useLoginMutation, useRestoreSessionMutation } from "@/lib/api/authApi";
 import { apiErrorMessage, httpStatus } from "@/lib/api/baseApi";
 import { useGetCurrentTenantQuery } from "@/lib/api/healthApi";
-import { DEV_TENANT } from "@/lib/config";
+import { DEV_TENANT, DEV_TENANT_SWITCH, devTenant, setDevTenant } from "@/lib/config";
 import { useAppSelector } from "@/store/hooks";
-import { fieldClass, labelClass, primaryButtonClass } from "@/components/ui/styles";
+import { fieldClass, labelClass, primaryButtonClass, secondaryButtonClass } from "@/components/ui/styles";
 
 function initials(name: string): string {
   return name
@@ -18,11 +18,59 @@ function initials(name: string): string {
     .join("");
 }
 
+/** The school chosen in this browser (development); the server render uses NEXT_PUBLIC_TENANT. */
+const noSubscription = () => () => {};
+function useDevTenant(): string {
+  return useSyncExternalStore(noSubscription, devTenant, () => DEV_TENANT);
+}
+
+/**
+ * Development only: switch school (or the platform, for the Super Admin)
+ * without editing .env.local. The page reloads so every request uses it.
+ */
+function DevSchoolSwitch({ current }: { current: string }) {
+  const [value, setValue] = useState(current);
+
+  function apply(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const slug = value.trim().toLowerCase();
+    setDevTenant(slug === DEV_TENANT ? null : slug);
+    window.location.reload();
+  }
+
+  return (
+    <form onSubmit={apply} className="mt-4 rounded-lg border border-dashed border-line p-3">
+      <label htmlFor="dev-school" className="text-xs font-semibold uppercase tracking-wide text-muted">
+        School (development only)
+      </label>
+      <div className="flex items-end gap-2">
+        <input
+          id="dev-school"
+          list="dev-schools"
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          placeholder="platform"
+          className={fieldClass}
+        />
+        <button type="submit" className={`${secondaryButtonClass} h-11 shrink-0`}>
+          Switch
+        </button>
+      </div>
+      <datalist id="dev-schools">
+        <option value="northfield" />
+        <option value="sunrise" />
+      </datalist>
+      <p className="mt-2 text-xs text-muted">Leave empty to sign in to the platform as Super Admin.</p>
+    </form>
+  );
+}
+
 /** Sign-in page, as in mockup 01 (school panel on the left, form on the right). */
 export default function LoginScreen() {
   const router = useRouter();
   const auth = useAppSelector((state) => state.auth);
   const school = useGetCurrentTenantQuery();
+  const tenant = useDevTenant();
   const [login, { isLoading }] = useLoginMutation();
   const [restoreSession] = useRestoreSessionMutation();
 
@@ -54,7 +102,7 @@ export default function LoginScreen() {
   }
 
   const unknownSchool = httpStatus(school.error) === 404;
-  // No school in the request (NEXT_PUBLIC_TENANT empty): platform Super Admin sign-in.
+  // No school in the request (none chosen): platform Super Admin sign-in.
   const platform = httpStatus(school.error) === 400;
   const schoolName = school.data?.name ?? (platform ? "YESE platform" : undefined);
 
@@ -105,7 +153,7 @@ export default function LoginScreen() {
           )}
           {unknownSchool && (
             <p role="alert" className="mt-4 rounded-lg bg-err-bg p-3 text-sm text-err">
-              School “{DEV_TENANT}” was not found. Check NEXT_PUBLIC_TENANT, or run
+              School “{tenant}” was not found. Check the school name, or run
               pnpm db:seed in the backend.
             </p>
           )}
@@ -166,10 +214,12 @@ export default function LoginScreen() {
           </form>
 
           <p className="mt-6 border-t border-line pt-4 text-xs leading-relaxed text-muted">
-            Signing in to <strong>{school.data?.slug ?? (DEV_TENANT || "the platform")}</strong> on YESE. For
+            Signing in to <strong>{school.data?.slug ?? (tenant || "the platform")}</strong> on YESE. For
             security, you will be signed out after 15 minutes without activity. Forgot your
             password? Ask your school administrator to reset it.
           </p>
+
+          {DEV_TENANT_SWITCH && <DevSchoolSwitch key={tenant} current={tenant} />}
         </div>
       </section>
     </main>

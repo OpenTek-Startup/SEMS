@@ -20,7 +20,8 @@ cp .env.example .env        # then paste your Neon DATABASE_URL and DIRECT_URL, 
 pnpm install                # also generates the Prisma client
 pnpm db:status              # checks the database connection and migrations
 pnpm db:migrate             # applies migrations that are not in your database yet
-pnpm db:seed                # demo schools, roles and accounts (prints a one-time password)
+pnpm db:generate            # regenerates the Prisma client (Prisma 7: migrate does not do it)
+pnpm db:seed                # demo schools, staff, students, marks (prints a one-time password)
 pnpm start:dev              # http://localhost:3001/api/health
 
 # 2. Frontend (second terminal)
@@ -36,12 +37,38 @@ The home page shows whether the frontend, backend and database are all connected
 
 - Open http://localhost:3000/login. In development the school comes from
   `NEXT_PUBLIC_TENANT` in `frontend/.env.local` (sent as the `X-Tenant` header);
-  in production it comes from the subdomain (`northfield.yese.app`).
-- Seeded accounts: `admin@northfield.school`, `admin@sunrise.school`, and the
-  platform Super Admin `superadmin@yese.local` (signs in with no school). They all
-  use the password printed by `pnpm db:seed` and must change it at first sign-in.
+  in production it comes from the subdomain (`northfield.yese.app`) and the
+  backend ignores the header.
+- To change school in development, use the **School (development only)** box
+  under the sign-in form: type `sunrise`, or leave it empty for the platform
+  (Super Admin). The choice is kept in this browser only.
+- Seeded accounts: `admin@northfield.school`, `admin@sunrise.school`, the
+  Northfield teacher `b.ngwa@northfield.school` (Mathematics), and the platform
+  Super Admin `superadmin@yese.local` (signs in with no school). They all use the
+  password printed by `pnpm db:seed` and must change it at first sign-in.
 - Sessions end after 15 minutes without activity (`SESSION_IDLE_MINUTES`).
 - Every backend route needs a signed-in user unless it is marked `@Public()`.
+
+## What is built
+
+| Module | Pages | Backend (`backend/src/modules/`) |
+|---|---|---|
+| Platform: schools and modules | Platform | `platform` |
+| Users, roles, permissions, audit log | Users, Audit log | `core/auth`, `users`, `audit` |
+| Academic structure: years, terms, classes, subjects, teachers | Academic structure | `academic`, `teaching` |
+| Staff | Staff | `staff` |
+| Students and enrollment | Students, Classes | `students`, `enrollment` |
+| Assessment: mark sheets, submit, validate, lock, override | Assessment | `assessment` |
+| Results: term results, publication, year results | Results | `results` |
+| School dashboard | Home (dashboard) | `dashboard` |
+
+Grading rules (Cameroon): marks out of 20, sequences weighted, subjects with
+coefficients, absent students left out of the average, pass mark 10/20, shared
+ranks (1, 2, 2, 4). The rules live in the `*-rules.ts` files and are unit-tested.
+`backend/src/modules/results/REPORT_CARD_DATA.md` describes the report card data.
+
+The demo seed leaves Form 1 A with a complete First Term (ready to publish) and
+the other classes in the middle of Sequence 2.
 
 ## Useful commands
 
@@ -49,6 +76,7 @@ The home page shows whether the frontend, backend and database are all connected
 |---|---|---|
 | backend | `pnpm test` / `pnpm test:e2e` | unit / API tests (no database needed) |
 | backend | `pnpm db:migrate` | create and apply a migration after editing `prisma/schema.prisma` |
+| backend | `pnpm db:generate` | regenerate the Prisma client (needed after every schema change or pull) |
 | backend | `pnpm db:studio` | browse the database |
 | frontend | `pnpm lint` / `pnpm typecheck` | lint / type-check |
 

@@ -2,7 +2,7 @@
 
 import { useGetCurrentTenantQuery, useGetHealthQuery } from "@/lib/api/healthApi";
 import { httpStatus, isNetworkError } from "@/lib/api/baseApi";
-import { API_URL, DEV_TENANT } from "@/lib/config";
+import { API_URL, devTenant } from "@/lib/config";
 
 type State = "ok" | "down" | "checking" | "unknown";
 
@@ -70,7 +70,7 @@ export default function SystemStatus() {
       : "down";
   const schoolDetail = school.data
     ? `${school.data.name} (${school.data.slug})`
-    : `X-Tenant: ${DEV_TENANT} — ${httpStatus(school.error) === 404 ? "unknown school, run pnpm db:seed" : "not resolved"}`;
+    : `X-Tenant: ${devTenant()} — ${httpStatus(school.error) === 404 ? "unknown school, run pnpm db:seed" : "not resolved"}`;
 
   const lastChecked = fulfilledTimeStamp
     ? new Date(fulfilledTimeStamp).toLocaleTimeString()

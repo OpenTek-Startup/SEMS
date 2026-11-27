@@ -5,7 +5,7 @@ import type {
   FetchArgs,
   FetchBaseQueryError,
 } from "@reduxjs/toolkit/query";
-import { API_URL, DEV_TENANT } from "@/lib/config";
+import { API_URL, devTenant } from "@/lib/config";
 import {
   passwordChangeRequired,
   serverUnreachable,
@@ -39,7 +39,8 @@ const rawBaseQuery = fetchBaseQuery({
   // Sends the httpOnly refresh cookie to /auth/refresh and /auth/logout.
   credentials: "include",
   prepareHeaders: (headers, { getState }) => {
-    if (DEV_TENANT) headers.set("X-Tenant", DEV_TENANT);
+    const tenant = devTenant();
+    if (tenant) headers.set("X-Tenant", tenant);
     const token = (getState() as StateWithAuth).auth?.accessToken;
     if (token) headers.set("Authorization", `Bearer ${token}`);
     return headers;
