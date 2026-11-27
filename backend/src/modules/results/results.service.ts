@@ -1,12 +1,27 @@
-import { BadRequestException, HttpException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  HttpException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
+import type { Prisma } from '../../generated/prisma/client';
+import { AuditService } from '../../core/audit/audit.service';
+import type { AuthContext } from '../../core/auth/auth.types';
 import { currentTenant, currentTenantId } from '../../core/tenancy/tenant-context';
 import { TenantPrismaService } from '../../core/tenancy/tenant-prisma.service';
-import { naturalCompare } from '../academic/academic-rules';
+import { naturalCompare, toSectionList } from '../academic/academic-rules';
 import { EnrollmentService } from '../enrollment/enrollment.service';
 import type { Problem } from '../staff/staff-rules';
 import {
+  type AnnualResults,
+  changesSincePublication,
+  checkPublishable,
+  computeAnnual,
   computeTerm,
+  type TermOfYear,
   type ReportCardData,
+  type ResultChange,
   type ResultSubject,
   type TermResults,
   toReportCards,
@@ -26,31 +41,93 @@ export interface SectionResults {
   results: TermResults;
 }
 
-function fail(status: 400 | 404, problem: Problem): HttpException {
-  return status === 404 ? new NotFoundException(problem) : new BadRequestException(problem);
+/** Who published a section's results, and when. */
+export interface PublicationInfo {
+  version: number;
+  publishedAt: string;
+  publishedBy: string;
 }
+
+/** The live results, with the publication state of the section. */
+export interface SectionResultsView extends SectionResults {
+  publication: PublicationInfo | null;
+  /** students whose average or rank would change if republished now (empty when up to date or not published) */
+  changesSincePublication: ResultChange[];
+}
+
+/** One line of the publication overview of a term. */
+export interface PublicationLine {
+  sectionId: string;
+  label: string;
+  publication: PublicationInfo | null;
+}
+
+const PUBLICATION_SELECT = {
+  id: true,
+  termId: true,
+  sectionId: true,
+  version: true,
+  publishedAt: true,
+  publishedByName: true,
+  snapshot: true,
+} satisfies Prisma.ResultPublicationSelect;
+
+function fail(status: 400 | 404 | 409, problem: Problem): HttpException {
+  if (status === 404) return new NotFoundException(problem);
+  if (status === 409) return new ConflictException(problem);
+  return new BadRequestException(problem);
+}
+
+const infoOf = (p: { version: number; publishedAt: Date; publishedByName: string }): PublicationInfo => ({
+  version: p.version,
+  publishedAt: p.publishedAt.toISOString(),
+  publishedBy: p.publishedByName,
+});
 
 /**
  * Results (module "results"): term averages, ranks and class statistics of
  * a section, computed on demand from the marks (results-rules.ts does the
  * arithmetic). Only locked assessments count, unless a provisional preview
  * is asked for.
+ *
+ * Publishing freezes a copy of the results of a section for a term
+ * (results.publish). Report cards print from that copy, so a mark changed
+ * later (override) does not silently change a published report card: the
+ * results page lists what would change, and the exam officer republishes.
  */
 @Injectable()
 export class ResultsService {
   constructor(
     private readonly tdb: TenantPrismaService,
     private readonly enrollment: EnrollmentService,
+    private readonly audit: AuditService,
   ) {}
 
   private get db() {
     return this.tdb.db;
   }
 
-  async section(termId: string, sectionId: string, provisional: boolean): Promise<SectionResults> {
+  /** The live results with their publication state (what the Results page shows). */
+  async section(termId: string, sectionId: string, provisional: boolean): Promise<SectionResultsView> {
+    const live = await this.compute(termId, sectionId, provisional);
+    const published = await this.findPublication(termId, sectionId);
+    if (!published) return { ...live, publication: null, changesSincePublication: [] };
+    // Compare with the official (locked-only) results, whatever the preview setting.
+    const official = provisional ? await this.compute(termId, sectionId, false) : live;
+    return {
+      ...live,
+      publication: infoOf(published),
+      changesSincePublication: changesSincePublication(
+        (published.snapshot as unknown as SectionResults).results,
+        official.results,
+      ),
+    };
+  }
+
+  /** Results of one section for one term, computed now from the marks. */
+  private async compute(termId: string, sectionId: string, provisional: boolean): Promise<SectionResults> {
     this.requireSchool();
-    const term = await this.db.term.findFirst({ where: { id: termId }, select: { id: true, name: true, academicYearId: true } });
-    if (!term) throw fail(404, { code: 'TERM_NOT_FOUND', message: 'This term does not exist in your school.' });
+    const term = await this.findTerm(termId);
     const yearRow = (await this.db.academicYear.findFirst({ where: { id: term.academicYearId }, select: { id: true, name: true } }))!;
     const year = { id: yearRow.id, name: yearRow.name };
     const section = await this.db.section.findFirst({ where: { id: sectionId }, select: { id: true, classId: true, name: true } });
@@ -121,13 +198,176 @@ export class ResultsService {
     };
   }
 
-  /** One report card per student of the section, in rank order (the shape of report-card.sample.json). */
+  /**
+   * One report card per student of the section, in rank order (the shape of
+   * report-card.sample.json). From the published copy when the results are
+   * published; otherwise computed now and marked provisional.
+   */
   async reportCards(termId: string, sectionId: string, provisional: boolean): Promise<ReportCardData[]> {
-    const r = await this.section(termId, sectionId, provisional);
+    this.requireSchool();
+    const published = provisional ? null : await this.findPublication(termId, sectionId);
+    const r = published ? (published.snapshot as unknown as SectionResults) : await this.compute(termId, sectionId, provisional);
     return toReportCards(
-      { school: { name: currentTenant()?.name ?? '' }, year: r.year, term: r.term, section: r.section },
+      {
+        school: { name: currentTenant()?.name ?? '' },
+        year: r.year,
+        term: r.term,
+        section: r.section,
+        published: published !== null,
+        publishedAt: published ? published.publishedAt.toISOString() : null,
+      },
       r.results,
     );
+  }
+
+  /** Every section of the term's year with its publication state (overview for the exam officer). */
+  async publications(termId: string): Promise<{ term: { id: string; name: string }; sections: PublicationLine[] }> {
+    this.requireSchool();
+    const term = await this.findTerm(termId);
+    const [classes, sections, rows] = await Promise.all([
+      this.db.schoolClass.findMany({ select: { id: true, name: true, level: true } }),
+      this.db.section.findMany({ select: { id: true, classId: true, name: true, capacity: true } }),
+      this.db.resultPublication.findMany({
+        where: { termId },
+        select: { sectionId: true, version: true, publishedAt: true, publishedByName: true },
+      }),
+    ]);
+    const bySection = new Map(rows.map((r) => [r.sectionId, r]));
+    return {
+      term: { id: term.id, name: term.name },
+      sections: toSectionList(classes, sections).map((s) => {
+        const p = bySection.get(s.id);
+        return { sectionId: s.id, label: s.label, publication: p ? infoOf(p) : null };
+      }),
+    };
+  }
+
+  /** Publishes (or republishes) the final results of a section for a term. */
+  async publish(actor: AuthContext, termId: string, sectionId: string, ip: string | null): Promise<SectionResultsView> {
+    const tenantId = this.requireSchool();
+    const live = await this.compute(termId, sectionId, false);
+    const problem = checkPublishable({
+      label: live.section.label,
+      termName: live.term.name,
+      counted: live.counted.length,
+      pending: live.pending,
+      classified: live.results.stats.classified,
+    });
+    if (problem) throw fail(409, problem);
+
+    const user = await this.db.user.findFirst({ where: { id: actor.userId }, select: { firstName: true, lastName: true } });
+    const publishedByName = user ? `${user.firstName} ${user.lastName}`.trim() : '';
+    const snapshot = live as unknown as Prisma.InputJsonValue;
+    const existing = await this.findPublication(termId, sectionId);
+    const now = new Date();
+    let version = 1;
+    if (existing) {
+      version = existing.version + 1;
+      await this.db.resultPublication.update({
+        where: { id: existing.id },
+        data: { version, publishedAt: now, publishedByUserId: actor.userId, publishedByName, snapshot },
+      });
+    } else {
+      await this.db.resultPublication.create({
+        data: { tenantId, termId, sectionId, version, publishedAt: now, publishedByUserId: actor.userId, publishedByName, snapshot },
+      });
+    }
+    await this.audit.record({
+      action: existing ? 'results.republished' : 'results.published',
+      tenantId: actor.tenantId,
+      actorUserId: actor.userId,
+      entity: 'result_publication',
+      entityId: sectionId,
+      detail: {
+        term: live.term.name,
+        section: live.section.label,
+        version,
+        students: live.results.stats.classified,
+        classAverage: live.results.stats.classAverage,
+      },
+      ipAddress: ip,
+    });
+    return this.section(termId, sectionId, false);
+  }
+
+  /** Withdraws published results (they go back to provisional). The reason is kept in the audit log. */
+  async unpublish(
+    actor: AuthContext,
+    termId: string,
+    sectionId: string,
+    reason: string,
+    ip: string | null,
+  ): Promise<SectionResultsView> {
+    this.requireSchool();
+    const existing = await this.findPublication(termId, sectionId);
+    if (!existing) {
+      throw fail(409, { code: 'NOT_PUBLISHED', message: 'These results are not published.' });
+    }
+    const why = reason.trim().replace(/\s+/g, ' ');
+    if (why.length < 10) {
+      throw fail(400, { code: 'REASON_REQUIRED', message: 'Give the reason for withdrawing published results (at least 10 characters).' });
+    }
+    await this.db.resultPublication.delete({ where: { id: existing.id } });
+    const snapshot = existing.snapshot as unknown as SectionResults;
+    await this.audit.record({
+      action: 'results.unpublished',
+      tenantId: actor.tenantId,
+      actorUserId: actor.userId,
+      entity: 'result_publication',
+      entityId: sectionId,
+      detail: { term: snapshot.term.name, section: snapshot.section.label, version: existing.version, reason: why },
+      ipAddress: ip,
+    });
+    return this.section(termId, sectionId, false);
+  }
+
+  /**
+   * Annual results of a section: each term from its published copy, or
+   * computed now from locked assessments when not published. Terms with
+   * nothing locked and nothing published yet are left out.
+   */
+  async annual(
+    sectionId: string,
+    yearId?: string,
+  ): Promise<{ year: { id: string; name: string }; section: { id: string; label: string } } & AnnualResults> {
+    this.requireSchool();
+    const yearRow = yearId
+      ? await this.db.academicYear.findFirst({ where: { id: yearId }, select: { id: true, name: true } })
+      : await this.db.academicYear.findFirst({ where: { isCurrent: true }, select: { id: true, name: true } });
+    if (!yearRow) {
+      throw yearId
+        ? fail(404, { code: 'YEAR_NOT_FOUND', message: 'This academic year does not exist in your school.' })
+        : fail(400, { code: 'YEAR_REQUIRED', message: 'There is no current academic year. Choose a year.' });
+    }
+    const terms = await this.db.term.findMany({
+      where: { academicYearId: yearRow.id },
+      select: { id: true, name: true, startDate: true },
+    });
+    terms.sort((a, b) => a.startDate.getTime() - b.startDate.getTime());
+
+    const sectionRow = await this.db.section.findFirst({ where: { id: sectionId }, select: { id: true, classId: true, name: true } });
+    if (!sectionRow) throw fail(404, { code: 'SECTION_NOT_FOUND', message: 'This section does not exist in your school.' });
+    const schoolClass = await this.db.schoolClass.findFirst({ where: { id: sectionRow.classId }, select: { name: true } });
+    const section = { id: sectionRow.id, label: `${schoolClass?.name ?? '?'} ${sectionRow.name}` };
+
+    const counted: TermOfYear[] = [];
+    for (const term of terms) {
+      const published = await this.findPublication(term.id, sectionId);
+      const r = published ? (published.snapshot as unknown as SectionResults) : await this.compute(term.id, sectionId, false);
+      if (!published && r.counted.length === 0) continue;
+      counted.push({ termId: term.id, name: term.name, published: published !== null, results: r.results });
+    }
+    return { year: { id: yearRow.id, name: yearRow.name }, section, ...computeAnnual(counted) };
+  }
+
+  private async findPublication(termId: string, sectionId: string) {
+    return this.db.resultPublication.findFirst({ where: { termId, sectionId }, select: PUBLICATION_SELECT });
+  }
+
+  private async findTerm(id: string): Promise<{ id: string; name: string; academicYearId: string }> {
+    const term = await this.db.term.findFirst({ where: { id }, select: { id: true, name: true, academicYearId: true } });
+    if (!term) throw fail(404, { code: 'TERM_NOT_FOUND', message: 'This term does not exist in your school.' });
+    return { id: term.id, name: term.name, academicYearId: term.academicYearId };
   }
 
   private requireSchool(): string {

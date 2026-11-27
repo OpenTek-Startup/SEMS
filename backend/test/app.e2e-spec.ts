@@ -2162,6 +2162,7 @@ describe('YESE API (e2e)', () => {
         'assessment.marks.override',
         'results.compute',
         'results.reportcard.generate',
+        'results.publish',
       ];
       const ROLE_EXAM_OFFICER = 'a0000000-0000-4000-8000-000000000005';
 
@@ -2245,6 +2246,7 @@ describe('YESE API (e2e)', () => {
             'assessment.marks.override',
             'results.compute',
             'results.reportcard.generate',
+            'results.publish',
           ],
         });
         fakeDb.addUser(
@@ -2417,6 +2419,131 @@ describe('YESE API (e2e)', () => {
         await save(teacher, seq.id, [[s.ada.id, 14], [s.bih.id, 11]]).expect(200);
         await teacher.del(`/assessments/${seq.id}`).expect(200);
         expect(fakeDb.marks.rows).toHaveLength(0);
+      });
+
+      it('publishes final results; report cards then print the published copy until republished', async () => {
+        const s = await school();
+        const teacher = api(await as('teacher@northfield.school'));
+        const exams = api(await as('exams@northfield.school'));
+        const seq = await create(teacher, s);
+        await save(teacher, seq.id, [[s.ada.id, 16], [s.bih.id, 'ABS'], [s.che.id, 8]]).expect(200);
+        await teacher.post(`/assessments/${seq.id}/submit`).expect(201);
+        await exams.post(`/assessments/${seq.id}/validate`).expect(201);
+        await exams.post(`/assessments/${seq.id}/lock`).expect(201);
+        const english = await create(s.a, s, { subjectId: s.eng.id });
+
+        const target = { termId: s.term.id, sectionId: s.f1a.id };
+        const notFinal = await exams.post('/results/publish', target).expect(409);
+        expect(notFinal.body.error).toMatchObject({ code: 'RESULTS_NOT_FINAL' });
+        expect(notFinal.body.error.message).toContain('1 assessment of First Term in Form 1 A');
+        await s.a.del(`/assessments/${english.id}`).expect(200);
+        expect((await teacher.post('/results/publish', target).expect(403)).body.error.code).toBe('PERMISSION_DENIED');
+        expect((await exams.post('/results/publish', { termId: s.term.id, sectionId: s.f1b.id }).expect(409)).body.error.code).toBe('NOTHING_TO_PUBLISH');
+
+        const first = (await exams.post('/results/publish', target).expect(201)).body.data;
+        expect(first.publication).toMatchObject({ version: 1, publishedBy: expect.any(String) });
+        expect(first.changesSincePublication).toEqual([]);
+        const cards = (await exams.get(`/results/report-cards?termId=${s.term.id}&sectionId=${s.f1a.id}`).expect(200)).body.data;
+        expect(cards[0]).toMatchObject({ published: true, publishedAt: expect.any(String), result: { student: { fullName: 'Abena Ada' }, rank: 1 } });
+
+        // A locked mark is overridden after publishing: the results page lists what would change,
+        // the report cards keep the published copy.
+        await save(exams, seq.id, [[s.bih.id, 15]], 'Absence was a recording error').expect(200);
+        const live = (await exams.get(`/results?termId=${s.term.id}&sectionId=${s.f1a.id}`).expect(200)).body.data;
+        expect(live.changesSincePublication).toEqual([
+          { studentId: s.bih.id, fullName: 'Bih Clarisse', before: { average: null, rank: null }, after: { average: 15, rank: 2 } },
+          { studentId: s.che.id, fullName: 'Che Daniel', before: { average: 8, rank: 2 }, after: { average: 8, rank: 3 } },
+        ]);
+        const still = (await exams.get(`/results/report-cards?termId=${s.term.id}&sectionId=${s.f1a.id}`).expect(200)).body.data;
+        expect(still.find((c: any) => c.result.student.fullName === 'Bih Clarisse').result.average).toBeNull();
+        const preview = (await exams.get(`/results/report-cards?termId=${s.term.id}&sectionId=${s.f1a.id}&provisional=true`).expect(200)).body.data;
+        expect(preview[0].published).toBe(false);
+
+        const second = (await exams.post('/results/publish', target).expect(201)).body.data;
+        expect(second).toMatchObject({ publication: { version: 2 }, changesSincePublication: [] });
+        const overview = (await exams.get(`/results/publications?termId=${s.term.id}`).expect(200)).body.data;
+        expect(overview.sections.map((x: any) => [x.label, x.publication?.version ?? null])).toEqual([
+          ['Form 1 A', 2],
+          ['Form 1 B', null],
+        ]);
+
+        await exams.post('/results/unpublish', target).expect(400);
+        expect((await exams.post('/results/unpublish', { ...target, reason: 'oops' }).expect(400)).body.error.code).toBe('REASON_REQUIRED');
+        const withdrawn = (await exams.post('/results/unpublish', { ...target, reason: 'Wrong coefficient for English' }).expect(201)).body.data;
+        expect(withdrawn.publication).toBeNull();
+        expect((await exams.post('/results/unpublish', { ...target, reason: 'Wrong coefficient for English' }).expect(409)).body.error.code).toBe('NOT_PUBLISHED');
+        const draft = (await exams.get(`/results/report-cards?termId=${s.term.id}&sectionId=${s.f1a.id}`).expect(200)).body.data;
+        expect(draft[0]).toMatchObject({ published: false, publishedAt: null });
+
+        const log = fakeDb.audit.filter((x) => x.entity === 'result_publication');
+        expect(log.map((x) => x.action)).toEqual(['results.published', 'results.republished', 'results.unpublished']);
+        expect(log[2].detail).toMatchObject({ section: 'Form 1 A', version: 2, reason: 'Wrong coefficient for English' });
+      });
+
+      it('the dashboard shows each user the figures they may see', async () => {
+        const s = await school();
+        const teacher = api(await as('teacher@northfield.school'));
+        await create(teacher, s);
+        await create(s.a, s, { subjectId: s.eng.id });
+        await http().get('/api/dashboard').set('X-Tenant', 'northfield').expect(401);
+
+        const admin = (await s.a.get('/dashboard').expect(200)).body.data;
+        expect(admin).toMatchObject({
+          year: { name: '2026-2027' },
+          term: { name: 'First Term' },
+          students: { enrolled: 4, girls: 2, boys: 2, withoutClass: 0, sections: 2 },
+          staff: { active: 1, teaching: 1 },
+          teaching: { places: 4, assigned: 1 },
+          assessments: { scope: 'school', overall: { total: 2, open: 2 } },
+          results: { sections: 2, published: 0 },
+        });
+        expect(admin.assessments.byClass).toEqual([
+          { classId: expect.any(String), name: 'Form 1', total: 2, open: 2, submitted: 0, validated: 0, locked: 0 },
+        ]);
+
+        // The teacher sees only the assessments of the classes she teaches, and no school-wide figures she may not see.
+        const mine = (await teacher.get('/dashboard').expect(200)).body.data;
+        expect(mine.assessments).toMatchObject({ scope: 'mine', overall: { total: 1, open: 1 } });
+        expect(mine.teaching).toBeNull();
+        expect(mine.results).toBeNull();
+
+        // Sunrise: Students is its only module.
+        const sunrise = (await api(await as('admin@sunrise.school', 'sunrise')).get('/dashboard').expect(200)).body.data;
+        expect(sunrise).toMatchObject({ year: null, term: null, students: null, staff: null, assessments: null, results: null });
+      });
+
+      it('year results: averages over the terms with promotion decisions', async () => {
+        const s = await school();
+        const teacher = api(await as('teacher@northfield.school'));
+        const exams = api(await as('exams@northfield.school'));
+        const url = `/results/annual?sectionId=${s.f1a.id}`;
+
+        const empty = (await exams.get(url).expect(200)).body.data;
+        expect(empty).toMatchObject({ year: { name: '2026-2027' }, section: { label: 'Form 1 A' }, terms: [], stats: { classified: 0 } });
+
+        const seq = await create(teacher, s);
+        await save(teacher, seq.id, [[s.ada.id, 16], [s.bih.id, 'ABS'], [s.che.id, 8]]).expect(200);
+        await teacher.post(`/assessments/${seq.id}/submit`).expect(201);
+        await exams.post(`/assessments/${seq.id}/validate`).expect(201);
+        await exams.post(`/assessments/${seq.id}/lock`).expect(201);
+
+        const year = (await exams.get(url).expect(200)).body.data;
+        expect(year.terms).toEqual([{ termId: s.term.id, name: 'First Term', published: false }]);
+        expect(year.students.map((l: any) => [l.student.fullName, l.average, l.rank, l.decision])).toEqual([
+          ['Abena Ada', 16, 1, 'promoted'],
+          ['Che Daniel', 8, 2, 'repeat'],
+          ['Bih Clarisse', null, null, null],
+        ]);
+        expect(year.stats).toEqual({ size: 3, classified: 2, classAverage: 12, promoted: 1, repeat: 1 });
+
+        await exams.post('/results/publish', { termId: s.term.id, sectionId: s.f1a.id }).expect(201);
+        expect((await exams.get(url).expect(200)).body.data.terms[0].published).toBe(true);
+
+        expect((await teacher.get(url).expect(403)).body.error.code).toBe('PERMISSION_DENIED');
+        await exams.get('/results/annual').expect(400);
+        const other = '99999999-9999-4999-8999-999999999999';
+        expect((await exams.get(`/results/annual?sectionId=${other}`).expect(404)).body.error.code).toBe('SECTION_NOT_FOUND');
+        expect((await exams.get(`${url}&yearId=${other}`).expect(404)).body.error.code).toBe('YEAR_NOT_FOUND');
       });
     });
   });

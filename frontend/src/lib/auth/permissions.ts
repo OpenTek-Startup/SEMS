@@ -25,6 +25,7 @@ export const PERMISSIONS = {
   marksLock: "assessment.marks.lock",
   marksOverride: "assessment.marks.override",
   resultsCompute: "results.compute",
+  resultsPublish: "results.publish",
 } as const;
 
 /** True when the user holds every listed permission. */

@@ -38,6 +38,8 @@ export const TENANT_OWNED_MODELS = new Set<string>([
   'Enrollment',
   // Marks (Phase 3)
   'Mark',
+  // Results (Phase 3)
+  'ResultPublication',
 ]);
 
 const WHERE_OPS = new Set([
