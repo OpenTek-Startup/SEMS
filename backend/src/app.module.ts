@@ -18,6 +18,7 @@ import { AssessmentModule } from './modules/assessment/assessment.module';
 import { StudentModule } from './modules/students/student.module';
 import { EnrollmentModule } from './modules/enrollment/enrollment.module';
 import { ResultsModule } from './modules/results/results.module';
+import { DashboardModule } from './modules/dashboard/dashboard.module';
 
 @Module({
   imports: [
@@ -49,6 +50,7 @@ import { ResultsModule } from './modules/results/results.module';
     TeachingModule,
     AssessmentModule,
     ResultsModule,
+    DashboardModule,
   ],
 })
 export class AppModule {}

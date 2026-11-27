@@ -15,6 +15,8 @@
       "id": "form-1-a",
       "label": "Form 1 A"
     },
+    "published": true,
+    "publishedAt": "2026-12-15T10:30:00.000Z",
     "result": {
       "student": {
         "studentId": "st-1",
@@ -172,6 +174,8 @@
       "id": "form-1-a",
       "label": "Form 1 A"
     },
+    "published": true,
+    "publishedAt": "2026-12-15T10:30:00.000Z",
     "result": {
       "student": {
         "studentId": "st-2",
@@ -329,6 +333,8 @@
       "id": "form-1-a",
       "label": "Form 1 A"
     },
+    "published": true,
+    "publishedAt": "2026-12-15T10:30:00.000Z",
     "result": {
       "student": {
         "studentId": "st-3",
@@ -486,6 +492,8 @@
       "id": "form-1-a",
       "label": "Form 1 A"
     },
+    "published": true,
+    "publishedAt": "2026-12-15T10:30:00.000Z",
     "result": {
       "student": {
         "studentId": "st-4",

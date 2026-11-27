@@ -7,6 +7,9 @@ import {
   round2,
   subjectAverage,
   toReportCards,
+  checkPublishable,
+  changesSincePublication,
+  computeAnnual,
   type ResultAssessment,
   type ResultMark,
   type TermInput,
@@ -178,6 +181,8 @@ describe('report cards', () => {
   it('gives one card per student, in rank order, with the section statistics', () => {
     const header = {
       school: { name: 'Northfield Bilingual College' },
+      published: true,
+      publishedAt: '2026-12-15T10:00:00.000Z',
       year: { id: 'y1', name: '2026-2027' },
       term: { id: 't1', name: 'First Term' },
       section: { id: 's1', label: 'Form 1 A' },
@@ -187,5 +192,87 @@ describe('report cards', () => {
     expect(cards[0]).toMatchObject({ ...header, result: { student: { fullName: 'Abena Ada' }, rank: 1 }, stats: { size: 5 } });
     expect(cards[4].result.rank).toBeNull();
     expect(cards[0].subjectStats).toHaveLength(3);
+  });
+});
+
+describe('publication rules', () => {
+  const base = { label: 'Form 1 A', termName: 'First Term' };
+
+  it('publishes only final results', () => {
+    expect(checkPublishable({ ...base, counted: 4, pending: 0, classified: 30 })).toBeNull();
+    expect(checkPublishable({ ...base, counted: 4, pending: 1, classified: 30 })).toEqual({
+      code: 'RESULTS_NOT_FINAL',
+      message: '1 assessment of First Term in Form 1 A is not locked yet. Lock or delete it before publishing.',
+    });
+    expect(checkPublishable({ ...base, counted: 4, pending: 3, classified: 30 })?.message).toBe(
+      '3 assessments of First Term in Form 1 A are not locked yet. Lock or delete them before publishing.',
+    );
+    expect(checkPublishable({ ...base, counted: 0, pending: 0, classified: 0 })?.code).toBe('NOTHING_TO_PUBLISH');
+    expect(checkPublishable({ ...base, counted: 2, pending: 0, classified: 0 })?.code).toBe('NOTHING_TO_PUBLISH');
+  });
+
+  it('lists the students whose average or rank changed since publishing', () => {
+    const published = computeTerm(input);
+    expect(changesSincePublication(published, computeTerm(input))).toEqual([]);
+
+    // Bih's Sequence 1 absence is overridden to 4/20 after publishing.
+    const live = computeTerm({
+      ...input,
+      marks: input.marks.map((m) => (m.assessmentId === 'm1' && m.studentId === 'bih' ? { ...m, score: 4, absent: false } : m)),
+    });
+    const changes = changesSincePublication(published, live);
+    // She stays third: only her own line changes.
+    expect(changes.map((c) => c.fullName)).toEqual(['Bih Clarisse']);
+    expect(changes.find((c) => c.studentId === 'bih')).toEqual({
+      studentId: 'bih',
+      fullName: 'Bih Clarisse',
+      before: { average: 13.63, rank: 3 },
+      after: { average: 11.29, rank: 3 },
+    });
+  });
+});
+
+describe('annual results', () => {
+  // Three terms built from the same section: term averages are those of computeTerm.
+  const term = (termId: string, name: string, override: (m: ResultMark) => ResultMark = (m) => m) => ({
+    termId,
+    name,
+    published: termId === 't1',
+    results: computeTerm({ ...input, marks: input.marks.map(override) }),
+  });
+
+  it('averages the term averages, ranks, and decides promotion at 10', () => {
+    // Term 1 as in the section above (Ada 14.42, Che 14.42, Bih 13.63, Eto 6.86, Fai none);
+    // term 2: Eto does much better in MATH; term 3: nobody has marks except in MATH sequence 1.
+    const t1 = term('t1', 'First Term');
+    const t2 = term('t2', 'Second Term', (m) => (m.studentId === 'eto' && m.assessmentId.startsWith('m') ? { ...m, score: m.assessmentId === 'm1' ? 18 : 36 } : m));
+    const year = computeAnnual([t1, t2]);
+    expect(year.terms).toEqual([
+      { termId: 't1', name: 'First Term', published: true },
+      { termId: 't2', name: 'Second Term', published: false },
+    ]);
+    const eto = year.students.find((l) => l.student.studentId === 'eto')!;
+    expect(eto.terms.map((t) => t.average)).toEqual([6.86, 13.71]);
+    expect(eto).toMatchObject({ average: 10.29, decision: 'promoted', appreciation: 'Average' });
+    expect(year.students.map((l) => [l.student.fullName, l.average, l.rank])).toEqual([
+      ['Abena Ada', 14.42, 1],
+      ['Che Daniel', 14.42, 1],
+      ['Bih Clarisse', 13.63, 3],
+      ['Eto Samuel', 10.29, 4],
+      ['Fai New', null, null],
+    ]);
+    expect(year.students[4]).toMatchObject({ decision: null, appreciation: null });
+    expect(year.stats).toEqual({ size: 5, classified: 4, classAverage: 13.19, promoted: 4, repeat: 0 });
+  });
+
+  it('a student below 10 over the year repeats; a term without an average is left out', () => {
+    const t1 = term('t1', 'First Term');
+    const t2 = term('t2', 'Second Term', (m) => (m.studentId === 'eto' ? { ...m, score: null, absent: true } : m));
+    const year = computeAnnual([t1, t2]);
+    const eto = year.students.find((l) => l.student.studentId === 'eto')!;
+    expect(eto.terms.map((t) => t.average)).toEqual([6.86, null]);
+    expect(eto).toMatchObject({ average: 6.86, decision: 'repeat', appreciation: 'Poor' });
+    expect(year.stats).toMatchObject({ promoted: 3, repeat: 1 });
+    expect(computeAnnual([])).toEqual({ terms: [], students: [], stats: { size: 0, classified: 0, classAverage: null, promoted: 0, repeat: 0 } });
   });
 });

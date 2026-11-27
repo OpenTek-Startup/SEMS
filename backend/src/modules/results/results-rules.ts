@@ -306,6 +306,10 @@ export function annualAverage(termAverages: readonly (number | null)[]): number 
  */
 export interface ReportCardData {
   school: { name: string };
+  /** true: the official, published results; false: provisional (not published yet, print as a draft) */
+  published: boolean;
+  /** ISO date-time of the publication, when published */
+  publishedAt: string | null;
   year: { id: string; name: string };
   term: { id: string; name: string };
   section: { id: string; label: string };
@@ -316,8 +320,146 @@ export interface ReportCardData {
 }
 
 export function toReportCards(
-  header: Pick<ReportCardData, 'school' | 'year' | 'term' | 'section'>,
+  header: Pick<ReportCardData, 'school' | 'year' | 'term' | 'section' | 'published' | 'publishedAt'>,
   results: TermResults,
 ): ReportCardData[] {
   return results.students.map((result) => ({ ...header, result, stats: results.stats, subjectStats: results.subjects }));
+}
+
+// -------------------------------------------------------- publication
+
+/**
+ * Results of a section are published once per term (republishing replaces
+ * them). They can be published only when final: every assessment of the
+ * term in the section is locked, and at least one student has an average.
+ */
+export function checkPublishable(input: {
+  label: string;
+  termName: string;
+  counted: number;
+  pending: number;
+  classified: number;
+}): { code: string; message: string } | null {
+  if (input.pending > 0) {
+    return {
+      code: 'RESULTS_NOT_FINAL',
+      message: `${input.pending} assessment${input.pending === 1 ? '' : 's'} of ${input.termName} in ${input.label} ${
+        input.pending === 1 ? 'is' : 'are'
+      } not locked yet. Lock or delete ${input.pending === 1 ? 'it' : 'them'} before publishing.`,
+    };
+  }
+  if (input.counted === 0 || input.classified === 0) {
+    return {
+      code: 'NOTHING_TO_PUBLISH',
+      message: `There are no locked marks for ${input.label} in ${input.termName} yet.`,
+    };
+  }
+  return null;
+}
+
+/** A student whose published result differs from the live one (a mark was overridden after publishing). */
+export interface ResultChange {
+  studentId: string;
+  fullName: string;
+  before: { average: number | null; rank: number | null } | null;
+  after: { average: number | null; rank: number | null } | null;
+}
+
+/** What would change if the section were republished now; empty when the published results are up to date. */
+export function changesSincePublication(published: TermResults, live: TermResults): ResultChange[] {
+  const before = new Map(published.students.map((s) => [s.student.studentId, s]));
+  const after = new Map(live.students.map((s) => [s.student.studentId, s]));
+  const ids = [...new Set([...before.keys(), ...after.keys()])];
+  const changes: ResultChange[] = [];
+  for (const id of ids) {
+    const b = before.get(id);
+    const a = after.get(id);
+    const same = b && a && b.average === a.average && b.rank === a.rank;
+    if (same) continue;
+    changes.push({
+      studentId: id,
+      fullName: (a ?? b)!.student.fullName,
+      before: b ? { average: b.average, rank: b.rank } : null,
+      after: a ? { average: a.average, rank: a.rank } : null,
+    });
+  }
+  return changes.sort((x, y) => x.fullName.localeCompare(y.fullName, undefined, { sensitivity: 'base' }));
+}
+
+// ------------------------------------------------------------ the year
+
+/** One term of the year as counted for annual results. */
+export interface TermOfYear {
+  termId: string;
+  name: string;
+  /** true: the published copy was used; false: computed now from locked assessments */
+  published: boolean;
+  results: TermResults;
+}
+
+export type Decision = 'promoted' | 'repeat';
+
+export interface AnnualLine {
+  student: ResultStudent;
+  /** the student's general average and rank in each term, in term order */
+  terms: { termId: string; average: number | null; rank: number | null }[];
+  /** mean of the term averages the student has; null when none */
+  average: number | null;
+  rank: number | null;
+  /** promoted at PASS_MARK or more, repeat below; null when not classified */
+  decision: Decision | null;
+  appreciation: string | null;
+}
+
+export interface AnnualResults {
+  terms: { termId: string; name: string; published: boolean }[];
+  /** by rank, then name; unclassified last */
+  students: AnnualLine[];
+  stats: { size: number; classified: number; classAverage: number | null; promoted: number; repeat: number };
+}
+
+/**
+ * Annual results of a section: the mean of each student's term averages
+ * (terms without an average are left out, as for subjects), ranked, with
+ * the promotion decision at the pass mark. Students are those of the
+ * latest term given (the current class list).
+ */
+export function computeAnnual(terms: readonly TermOfYear[]): AnnualResults {
+  const last = terms[terms.length - 1];
+  const students = last ? last.results.students.map((s) => s.student) : [];
+  const termLookup = terms.map((t) => new Map(t.results.students.map((s) => [s.student.studentId, s])));
+
+  const lines = students.map((student) => {
+    const perTerm = terms.map((t, i) => {
+      const r = termLookup[i].get(student.studentId);
+      return { termId: t.termId, average: r?.average ?? null, rank: r?.rank ?? null };
+    });
+    return { student, terms: perTerm, raw: annualAverage(perTerm.map((p) => p.average)) };
+  });
+  const ranks = rank(lines, (l) => l.raw);
+  const out: AnnualLine[] = lines.map((l) => ({
+    student: l.student,
+    terms: l.terms,
+    average: l.raw,
+    rank: ranks.get(l) ?? null,
+    decision: l.raw === null ? null : l.raw >= PASS_MARK ? 'promoted' : 'repeat',
+    appreciation: appreciation(l.raw),
+  }));
+  out.sort(
+    (a, b) =>
+      (a.rank ?? Infinity) - (b.rank ?? Infinity) ||
+      a.student.fullName.localeCompare(b.student.fullName, undefined, { sensitivity: 'base' }),
+  );
+  const averages = out.map((l) => l.average).filter((a): a is number => a !== null);
+  return {
+    terms: terms.map((t) => ({ termId: t.termId, name: t.name, published: t.published })),
+    students: out,
+    stats: {
+      size: out.length,
+      classified: averages.length,
+      classAverage: averages.length ? round2(averages.reduce((a, b) => a + b, 0) / averages.length) : null,
+      promoted: out.filter((l) => l.decision === 'promoted').length,
+      repeat: out.filter((l) => l.decision === 'repeat').length,
+    },
+  };
 }

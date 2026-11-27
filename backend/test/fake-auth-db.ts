@@ -168,6 +168,8 @@ export class FakeAuthDb {
   readonly enrollments = new FakeTable(true, { status: 'active', leftOn: null, reason: null });
   /** Marks (Phase 3) */
   readonly marks = new FakeTable(true, { score: null, absent: false });
+  /** Results (Phase 3) */
+  readonly resultPublications = new FakeTable(true, { version: 1 });
 
   reset() {
     this.tenants = [];
@@ -192,6 +194,7 @@ export class FakeAuthDb {
       this.students,
       this.enrollments,
       this.marks,
+      this.resultPublications,
     ];
     for (const t of tables) {
       t.rows = [];
@@ -442,6 +445,7 @@ export class FakeAuthDb {
       student: this.students.ops,
       enrollment: this.enrollments.ops,
       mark: this.marks.ops,
+      resultPublication: this.resultPublications.ops,
     };
     const client: Row = {};
     for (const [key, ops] of Object.entries(models)) {

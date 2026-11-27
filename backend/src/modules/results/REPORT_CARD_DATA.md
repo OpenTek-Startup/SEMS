@@ -5,9 +5,22 @@ type is in `results-rules.ts`; `report-card.sample.json` is real output of
 the rules for a small Form 1 A (four students, six subjects, two sequences),
 so the page can be built now and connected to the API later.
 
-The endpoint will be:
+The endpoint is:
 
     GET /api/results/report-cards?termId=&sectionId=   ->   ReportCardData[] (in rank order)
+
+## Published or provisional
+
+- When the exam officer has **published** the results of the section for the
+  term, the cards come from that frozen copy: `published: true` and
+  `publishedAt` (ISO date-time). A mark changed later does not change them
+  until the results are republished.
+- Otherwise they are computed now from the locked assessments:
+  `published: false`, `publishedAt: null`. Print them as a draft (for
+  example a "PROVISIONAL" mark across the page) so they are not mistaken for
+  official report cards.
+- `&provisional=true` always computes now, also counting submitted and
+  validated assessments (a preview; `published` is false).
 
 ## How the numbers are made
 
