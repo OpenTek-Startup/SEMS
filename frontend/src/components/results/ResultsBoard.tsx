@@ -14,7 +14,7 @@ import {
 } from "@/lib/api/resultsApi";
 import { PERMISSIONS, useCan } from "@/lib/auth/permissions";
 import { useActiveModules } from "@/lib/modules/useModules";
-import AppHeader from "@/components/layout/AppHeader";
+import { useAppSelector } from "@/store/hooks";
 import { Badge, Notice, smallButton, smallPrimaryButton, type Message } from "@/components/academic/academicUi";
 
 const selectClass =
@@ -63,6 +63,7 @@ function downloadCsv(r: SectionResults) {
  * assessments count, unless "Include assessments not yet locked" is ticked.
  */
 export default function ResultsBoard() {
+  const schoolName = useAppSelector((state) => state.auth.user?.school?.name ?? "");
   const canView = useCan(PERMISSIONS.resultsCompute);
   const canPublish = useCan(PERMISSIONS.resultsPublish);
   const modules = useActiveModules();
@@ -93,10 +94,33 @@ export default function ResultsBoard() {
 
   return (
     <div className="flex flex-1 flex-col">
-      <AppHeader />
-      <main className="mx-auto w-full max-w-7xl flex-1 px-6 py-8">
+      <main className="mx-auto w-full max-w-7xl flex-1 px-6 py-8 print:max-w-none print:px-0 print:py-0">
+        {/* On paper only: who printed what, for which class and term. */}
+        <div className="mb-4 hidden border-b-2 border-ink pb-2 print:block">
+          <p className="text-lg font-bold">{schoolName}</p>
+          <p className="text-sm">
+            {view === "term" && r
+              ? `Results · ${r.section.label} · ${r.term.name} · ${r.year.name}${r.publication ? ` · published version ${r.publication.version}` : " · not published"}`
+              : view === "summary"
+                ? "School summary of the results"
+                : "Year results"}
+            {" · printed "}
+            {new Date().toLocaleDateString()}
+          </p>
+        </div>
         <div className="flex flex-wrap items-end justify-between gap-3">
-          <h1 className="text-2xl font-semibold">Results</h1>
+          <div>
+            <p className="text-sm text-muted">Results{year ? ` · ${year.name}` : ""}</p>
+            <h1 className="mt-1 text-[28px] leading-tight font-semibold">
+              {view === "term" && r
+                ? `${r.section.label} · ${r.term.name}`
+                : view === "year"
+                  ? `${sections.data?.find((x) => x.id === section)?.label ?? "Class"} · The whole year`
+                  : view === "summary"
+                    ? "School summary"
+                    : "Results"}
+            </h1>
+          </div>
           {((view === "term" && r) || view === "summary") && (
             <div className="flex gap-2 print:hidden">
               {view === "term" && r && (
@@ -123,14 +147,7 @@ export default function ResultsBoard() {
         ) : (
           <>
             <div className="mt-4 flex flex-wrap items-end gap-3 print:hidden">
-              <label className="block w-48 text-xs font-medium text-muted">
-                Show
-                <select value={view} onChange={(e) => setView(e.target.value as View)} className={selectClass}>
-                  <option value="term">One term</option>
-                  <option value="year">The whole year</option>
-                  <option value="summary">School summary</option>
-                </select>
-              </label>
+              <ViewTabs value={view} onChange={setView} />
               {view !== "year" && (
               <label className="block w-48 text-xs font-medium text-muted">
                 Term
@@ -199,11 +216,7 @@ export default function ResultsBoard() {
                     {r.pending > 0 && `, ${r.pending} not counted yet`}
                   </span>
                 </p>
-                <p className="mt-1 text-sm text-muted">
-                  Class average {fmt(r.results.stats.classAverage)} · highest {fmt(r.results.stats.highest)} · lowest{" "}
-                  {fmt(r.results.stats.lowest)} · {r.results.stats.passed} of {r.results.stats.classified} at 10 or above
-                  {r.results.stats.passRate !== null && ` (${r.results.stats.passRate}%)`}
-                </p>
+                <KeyFigures results={r} />
 
                 {r.results.students.length === 0 ? (
                   <p className="mt-4 rounded-lg bg-ground p-4 text-sm text-muted">No student in this class.</p>
@@ -308,43 +321,45 @@ function PublicationBar(props: { results: SectionResults; canPublish: boolean; o
     }
   }
 
+  const total = r.counted.length + r.pending;
+  const final = !r.provisional && r.pending === 0 && r.counted.length > 0;
+  const state = p ? (changes.length > 0 ? "changed" : "published") : final ? "final" : "open";
+  const look = {
+    published: { border: "border-l-ok", title: `Published · version ${p?.version ?? 1}`, pill: "Published", pillClass: "bg-ok-bg text-ok" },
+    changed: { border: "border-l-warn", title: "Published, but marks changed since", pill: `${changes.length} change${changes.length === 1 ? "" : "s"}`, pillClass: "bg-warn-bg text-warn" },
+    final: { border: "border-l-brand", title: "Final, not published yet", pill: `${total} / ${total} locked`, pillClass: "bg-brand-tint text-brand" },
+    open: { border: "border-l-line", title: r.provisional ? "Preview, not final" : "Not final yet", pill: `${r.provisional ? 0 : r.counted.length} / ${total} locked`, pillClass: "bg-ground text-muted" },
+  }[state];
+
   return (
-    <div className="mt-4 rounded-xl border border-line bg-white p-4 text-sm print:hidden">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <p>
-          {p ? (
+    <section
+      aria-labelledby="publication-title"
+      className={`mt-4 flex flex-wrap items-center justify-between gap-4 rounded-xl border border-l-4 border-line bg-white px-5 py-4 print:hidden ${look.border}`}
+    >
+      <div className="max-w-3xl">
+        <div className="flex flex-wrap items-center gap-2.5">
+          <h2 id="publication-title" className="text-[17px] font-semibold">
+            {look.title}
+          </h2>
+          <span className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${look.pillClass}`}>{look.pill}</span>
+        </div>
+        <p className="mt-1.5 text-sm leading-relaxed text-muted">
+          {state === "published" && p && (
             <>
-              <strong>Published</strong> on {new Date(p.publishedAt).toLocaleString()} by {p.publishedBy || "—"}
-              {p.version > 1 && ` (version ${p.version})`}. Report cards print these results.
-            </>
-          ) : (
-            <>
-              <strong>Not published.</strong> Report cards are provisional until the results are published.
+              Published on {new Date(p.publishedAt).toLocaleString()} by {p.publishedBy || "—"}. Report cards and the student page
+              show this copy, even if a mark is changed later.
             </>
           )}
+          {state === "changed" && "Republishing would change the results below. Until then, report cards keep the published copy."}
+          {state === "final" &&
+            "Publishing freezes a copy of these results. Report cards and the student page show the published copy, even if a mark is changed later. You can republish or withdraw it, with a reason."}
+          {state === "open" &&
+            (r.provisional
+              ? "This preview counts assessments that are not locked yet. Untick the preview to see the official results."
+              : `${r.pending} assessment${r.pending === 1 ? " is" : "s are"} not locked yet. The results can be published once every assessment of the term is locked.`)}
         </p>
-        {props.canPublish && (
-          <div className="flex gap-2">
-            {(!p || changes.length > 0) && (
-              <button type="button" className={smallPrimaryButton} disabled={busy} onClick={() => void doPublish()}>
-                {p ? "Republish" : "Publish results"}
-              </button>
-            )}
-            {p && (
-              <button type="button" className={smallButton} disabled={busy} onClick={() => void doWithdraw()}>
-                Withdraw
-              </button>
-            )}
-          </div>
-        )}
-      </div>
-      {p && changes.length > 0 && (
-        <div className="mt-3 rounded-lg bg-warn-bg p-3 text-warn">
-          <p className="font-semibold">
-            Marks changed after publishing. Republishing would change {changes.length} student
-            {changes.length === 1 ? "" : "s"}:
-          </p>
-          <ul className="mt-1 space-y-0.5">
+        {state === "changed" && (
+          <ul className="mt-2 space-y-0.5 text-sm text-warn">
             {changes.map((c) => (
               <li key={c.studentId}>
                 {c.fullName}: average {c.before?.average ?? "—"} → {c.after?.average ?? "—"}, rank {c.before?.rank ?? "—"} →{" "}
@@ -352,10 +367,89 @@ function PublicationBar(props: { results: SectionResults; canPublish: boolean; o
               </li>
             ))}
           </ul>
+        )}
+      </div>
+      {props.canPublish && state !== "open" && (
+        <div className="flex gap-2">
+          {p && (
+            <button type="button" className="h-10 rounded-lg border border-line bg-white px-4 text-sm font-medium hover:bg-ground disabled:opacity-60" disabled={busy} onClick={() => void doWithdraw()}>
+              Withdraw
+            </button>
+          )}
+          {(state === "final" || state === "changed") && (
+            <button type="button" className={smallPrimaryButton} disabled={busy} onClick={() => void doPublish()}>
+              {p ? "Republish" : `Publish ${r.term.name} results`}
+            </button>
+          )}
         </div>
       )}
+    </section>
+  );
+}
+
+const VIEWS: { value: View; label: string }[] = [
+  { value: "term", label: "One term" },
+  { value: "year", label: "The whole year" },
+  { value: "summary", label: "School summary" },
+];
+
+/** The three ways to look at results, as tabs (mockups 16 to 18). */
+function ViewTabs({ value, onChange }: { value: View; onChange: (v: View) => void }) {
+  return (
+    <div role="tablist" aria-label="Show" className="inline-flex h-10 overflow-hidden rounded-lg border border-line bg-white">
+      {VIEWS.map((v) => (
+        <button
+          key={v.value}
+          type="button"
+          role="tab"
+          aria-selected={value === v.value}
+          onClick={() => onChange(v.value)}
+          className={`border-r border-line px-4 text-sm last:border-r-0 ${
+            value === v.value ? "bg-brand font-semibold text-white" : "text-ink hover:bg-ground"
+          }`}
+        >
+          {v.label}
+        </button>
+      ))}
     </div>
   );
+}
+
+/** A row of figure cards (label, big value, note), as in the mockups. */
+function FigureCards({ cards }: { cards: { label: string; value: string; note: string; alert?: boolean }[] }) {
+  return (
+    <div className={`mt-4 grid grid-cols-2 gap-3 md:grid-cols-3 ${cards.length >= 5 ? "xl:grid-cols-5" : "xl:grid-cols-4"}`}>
+      {cards.map((c) => (
+        <div key={c.label} className="rounded-xl border border-line bg-white px-4 py-3.5">
+          <p className="text-[13px] text-muted">{c.label}</p>
+          <p className={`mt-0.5 text-2xl font-semibold ${c.alert ? "text-err" : ""}`}>{c.value}</p>
+          <p className="text-[13px] text-muted">{c.note}</p>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** The class figures at a glance, as cards. */
+function KeyFigures({ results }: { results: SectionResults }) {
+  const s = results.results.stats;
+  const below = s.classified - s.passed;
+  const cards: { label: string; value: string; note: string; alert?: boolean }[] = [
+    {
+      label: "Classified",
+      value: `${s.classified} / ${s.size}`,
+      note: s.classified === s.size ? "every student has an average" : `${s.size - s.classified} without an average`,
+    },
+    { label: "Class average", value: fmt(s.classAverage), note: "out of 20", alert: s.classAverage !== null && s.classAverage < 10 },
+    {
+      label: "Highest · lowest",
+      value: `${fmt(s.highest)} · ${fmt(s.lowest)}`,
+      note: s.highest !== null && s.lowest !== null ? `a spread of ${(s.highest - s.lowest).toFixed(2)} points` : "—",
+    },
+    { label: "At 10 or above", value: String(s.passed), note: s.passRate !== null ? `${s.passRate}% of those classified` : "—" },
+    { label: "Below 10", value: String(below), note: below > 0 ? "to follow up with the class teacher" : "nobody", alert: below > 0 },
+  ];
+  return <FigureCards cards={cards} />;
 }
 
 /** Year results of a class: each term's average, the year average, rank and decision. */
@@ -385,11 +479,22 @@ function AnnualView({ sectionId }: { sectionId: string }) {
             : a.terms.map((t) => `${t.name}${t.published ? " (published)" : " (not published)"}`).join(", ")}
         </span>
       </p>
-      <p className="mt-1 text-sm text-muted">
-        Class average {fmt(a.stats.classAverage)} · {a.stats.promoted} promoted · {a.stats.repeat} repeat
-        {a.stats.size > a.stats.classified && ` · ${a.stats.size - a.stats.classified} not classified`}. The year average
-        is the mean of the term averages; promotion at 10/20.
-      </p>
+      <FigureCards
+        cards={[
+          {
+            label: "Promoted",
+            value: String(a.stats.promoted),
+            note: a.stats.classified > 0 ? `${Math.round((a.stats.promoted / a.stats.classified) * 100)}% of those classified` : "—",
+          },
+          { label: "Repeat the class", value: String(a.stats.repeat), note: "year average below 10", alert: a.stats.repeat > 0 },
+          { label: "Class average, year", value: fmt(a.stats.classAverage), note: "mean of the term averages" },
+          {
+            label: "Classified",
+            value: `${a.stats.classified} / ${a.stats.size}`,
+            note: a.stats.size > a.stats.classified ? `${a.stats.size - a.stats.classified} without an average` : "every student",
+          },
+        ]}
+      />
       {a.students.length > 0 && (
         <div className="mt-4 overflow-x-auto rounded-xl border border-line bg-white">
           <table className="w-full text-left text-sm">
@@ -423,7 +528,13 @@ function AnnualView({ sectionId }: { sectionId: string }) {
                     {fmt(l.average)}
                   </td>
                   <td className="px-3 py-1.5 text-xs">
-                    {l.decision === "promoted" ? "Promoted" : l.decision === "repeat" ? "Repeats the class" : "Not classified"}
+                    {l.decision === "promoted" ? (
+                      <span className="rounded-full bg-ok-bg px-2.5 py-0.5 font-semibold text-ok">Promoted</span>
+                    ) : l.decision === "repeat" ? (
+                      <span className="rounded-full bg-err-bg px-2.5 py-0.5 font-semibold text-err">Repeats the class</span>
+                    ) : (
+                      <span className="text-muted">Not classified</span>
+                    )}
                   </td>
                 </tr>
               ))}
@@ -431,6 +542,10 @@ function AnnualView({ sectionId }: { sectionId: string }) {
           </table>
         </div>
       )}
+      <p className="mt-2 text-xs text-muted print:hidden">
+        Year average: the mean of the term averages. Promoted at 10/20 or above; below, the student repeats the class. The class council
+        confirms the decisions.
+      </p>
     </>
   );
 }
@@ -460,12 +575,22 @@ function SummaryView({ termId }: { termId: string }) {
   const t = sm.totals;
   return (
     <>
-      <p className="mt-6 text-sm">
-        <strong>{sm.term.name} · whole school</strong>
-      </p>
-      <p className="mt-1 text-sm text-muted">
-        {t.classified} of {t.size} students classified · school average {fmt(t.average)} · {t.passed} at 10 or above (
-        {pct(t.passRate)}). Published classes use their published copy; the others count only their locked assessments.
+      <FigureCards
+        cards={[
+          {
+            label: "Classes",
+            value: String(sm.classes.length),
+            note: `${sm.classes.filter((c) => c.state === "published").length} published · ${
+              sm.classes.filter((c) => c.state === "final").length
+            } final · ${sm.classes.filter((c) => c.state === "in_progress").length} in progress`,
+          },
+          { label: "Students classified", value: `${t.classified} / ${t.size}`, note: sm.term.name },
+          { label: "School average", value: fmt(t.average), note: "out of 20", alert: t.average !== null && t.average < 10 },
+          { label: "At 10 or above", value: pct(t.passRate), note: `${t.passed} of ${t.classified} students` },
+        ]}
+      />
+      <p className="mt-2 text-xs text-muted">
+        Published classes use their published copy; the others count only their locked assessments.
       </p>
 
       <h2 className="mt-6 text-sm font-semibold uppercase tracking-wider text-muted">Classes</h2>
@@ -515,7 +640,7 @@ function SummaryView({ termId }: { termId: string }) {
               ))}
               <th className="px-3 py-2 text-right font-semibold">School</th>
               <th className="px-3 py-2 text-right font-semibold">Marked</th>
-              <th className="px-3 py-2 text-right font-semibold">Pass rate</th>
+              <th className="px-3 py-2 font-semibold">Pass rate</th>
             </tr>
           </thead>
           <tbody>
@@ -533,7 +658,17 @@ function SummaryView({ termId }: { termId: string }) {
                   {fmt(s.average)}
                 </td>
                 <td className="px-3 py-1.5 text-right font-mono">{s.graded}</td>
-                <td className="px-3 py-1.5 text-right font-mono">{pct(s.passRate)}</td>
+                <td className="px-3 py-1.5">
+                  <div className="flex min-w-36 items-center gap-2">
+                    <div className="h-2 flex-1 rounded bg-ground">
+                      <div
+                        className={`h-2 rounded ${s.passRate !== null && s.passRate < 50 ? "bg-err" : "bg-brand"}`}
+                        style={{ width: `${s.passRate ?? 0}%` }}
+                      />
+                    </div>
+                    <span className="w-12 text-right font-mono text-xs">{pct(s.passRate)}</span>
+                  </div>
+                </td>
               </tr>
             ))}
           </tbody>

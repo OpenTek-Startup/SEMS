@@ -2,7 +2,6 @@
 
 import Link from "next/link";
 import { useAppSelector } from "@/store/hooks";
-import AppHeader from "@/components/layout/AppHeader";
 import { useGetAuditQuery, type AuditItem } from "@/lib/api/auditApi";
 import { useGetDashboardQuery, type DashboardView, type StatusCounts } from "@/lib/api/dashboardApi";
 import { useGetMyTeachingQuery } from "@/lib/api/teachingApi";
@@ -33,7 +32,6 @@ export default function Dashboard() {
 
   return (
     <div className="flex flex-1 flex-col">
-      <AppHeader />
       <main className="mx-auto w-full max-w-6xl flex-1 px-6 py-8">
         <p className="text-sm text-muted">
           {now.toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "long", year: "numeric" })}
@@ -41,7 +39,7 @@ export default function Dashboard() {
           {d?.term && ` · ${d.term.name}${d.term.current ? "" : " (ended)"}`}
         </p>
         <div className="mt-1 flex flex-wrap items-end justify-between gap-3">
-          <h1 className="text-2xl font-semibold">
+          <h1 className="text-[28px] leading-tight font-semibold">
             {greeting(now.getHours())}, {user.firstName}
           </h1>
           {school && <QuickActions />}

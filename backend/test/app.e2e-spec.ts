@@ -103,6 +103,19 @@ describe('YESE API (e2e)', () => {
     expect(res.body.data).toMatchObject({ status: 'ok', database: 'connected' });
   });
 
+  it('sends the security headers on every response', async () => {
+    queryRaw.mockResolvedValue([{ '?column?': 1 }]);
+    const res = await request(app.getHttpServer()).get('/api/health').expect(200);
+    expect(res.headers['x-content-type-options']).toBe('nosniff');
+    expect(res.headers['x-frame-options']).toBe('DENY');
+    expect(res.headers['referrer-policy']).toBe('no-referrer');
+    expect(res.headers['cache-control']).toBe('no-store');
+    expect(res.headers['x-powered-by']).toBeUndefined();
+    // Errors too.
+    const missing = await request(app.getHttpServer()).get('/api/no-such-route').expect(404);
+    expect(missing.headers['x-frame-options']).toBe('DENY');
+  });
+
   it('GET /api/health returns 503 in the error shape when the database is down', async () => {
     queryRaw.mockRejectedValue(new Error('connect ECONNREFUSED'));
 
@@ -2544,6 +2557,44 @@ describe('YESE API (e2e)', () => {
         const other = '99999999-9999-4999-8999-999999999999';
         expect((await exams.get(`/results/annual?sectionId=${other}`).expect(404)).body.error.code).toBe('SECTION_NOT_FOUND');
         expect((await exams.get(`${url}&yearId=${other}`).expect(404)).body.error.code).toBe('YEAR_NOT_FOUND');
+      });
+
+      it("a student's results: each term, then the year average and decision, in the student's class", async () => {
+        const s = await school();
+        const teacher = api(await as('teacher@northfield.school'));
+        const exams = api(await as('exams@northfield.school'));
+        const url = (id: string) => `/results/student?studentId=${id}`;
+
+        const seq = await create(teacher, s);
+        await save(teacher, seq.id, [[s.ada.id, 16], [s.bih.id, 'ABS'], [s.che.id, 8]]).expect(200);
+        await teacher.post(`/assessments/${seq.id}/submit`).expect(201);
+        await exams.post(`/assessments/${seq.id}/validate`).expect(201);
+        await exams.post(`/assessments/${seq.id}/lock`).expect(201);
+        await exams.post('/results/publish', { termId: s.term.id, sectionId: s.f1a.id }).expect(201);
+
+        const ada = (await exams.get(url(s.ada.id)).expect(200)).body.data;
+        expect(ada).toMatchObject({
+          year: { name: '2026-2027' },
+          student: { id: s.ada.id, fullName: 'Abena Ada' },
+          section: { id: s.f1a.id, label: 'Form 1 A' },
+          classified: 2,
+          annual: { average: 16, rank: 1, decision: 'promoted' },
+        });
+        expect(ada.terms).toHaveLength(1);
+        expect(ada.terms[0]).toMatchObject({ termId: s.term.id, name: 'First Term', published: true, classified: 2, classAverage: 12 });
+        expect(ada.terms[0].result).toMatchObject({ average: 16, rank: 1, passed: true });
+        expect(ada.terms[0].result.subjects.find((l: any) => l.code === 'MATH')).toMatchObject({ average: 16 });
+
+        // Eto's class (Form 1 B) has no locked marks yet; a new student has no class this year.
+        const eto = (await exams.get(url(s.eto.id)).expect(200)).body.data;
+        expect(eto).toMatchObject({ section: { label: 'Form 1 B' }, terms: [], annual: null });
+        const fresh = (await s.a.post('/students', { firstName: 'New', lastName: 'Comer', gender: 'male' }).expect(201)).body.data;
+        expect((await exams.get(url(fresh.id)).expect(200)).body.data).toMatchObject({ section: null, terms: [], annual: null });
+
+        expect((await teacher.get(url(s.ada.id)).expect(403)).body.error.code).toBe('PERMISSION_DENIED');
+        await exams.get('/results/student').expect(400);
+        const other = '99999999-9999-4999-8999-999999999999';
+        expect((await exams.get(url(other)).expect(404)).body.error.code).toBe('STUDENT_NOT_FOUND');
       });
 
       it('term summary: figures of every class and subject, from the published copy once published', async () => {

@@ -25,7 +25,9 @@ import {
   type ResultSubject,
   type SummaryClassInput,
   type TermResults,
+  type StudentYear,
   type TermSummary,
+  studentYear,
   termSummary,
   toReportCards,
 } from './results-rules';
@@ -361,6 +363,70 @@ export class ResultsService {
     yearId?: string,
   ): Promise<{ year: { id: string; name: string }; section: { id: string; label: string } } & AnnualResults> {
     this.requireSchool();
+    const year = await this.findYear(yearId);
+    const section = await this.findSection(sectionId);
+    return { year, section, ...computeAnnual(await this.termsOfYear(year.id, section.id)) };
+  }
+
+  /**
+   * One student's results over a year (the student page): each term's subject
+   * averages, average and rank, then the year average and decision, in the
+   * class the student is in that year (the latest enrollment, if they moved).
+   */
+  async student(
+    studentId: string,
+    yearId?: string,
+  ): Promise<
+    {
+      year: { id: string; name: string };
+      student: { id: string; fullName: string; matricule: string };
+      section: { id: string; label: string } | null;
+    } & StudentYear
+  > {
+    this.requireSchool();
+    const row = await this.db.student.findFirst({
+      where: { id: studentId },
+      select: { id: true, firstName: true, lastName: true, matricule: true },
+    });
+    if (!row) throw fail(404, { code: 'STUDENT_NOT_FOUND', message: 'This student does not exist in your school.' });
+    const student = { id: row.id, fullName: `${row.lastName} ${row.firstName}`, matricule: row.matricule };
+    const year = await this.findYear(yearId);
+    // The active enrollment of the year, else the latest one (a student who left keeps their results).
+    const enrollments = await this.db.enrollment.findMany({
+      where: { academicYearId: year.id, studentId },
+      select: { sectionId: true, status: true, enrolledOn: true },
+    });
+    const enrollment =
+      enrollments.find((e) => e.status === 'active') ??
+      [...enrollments].sort((a, b) => new Date(b.enrolledOn).getTime() - new Date(a.enrolledOn).getTime())[0];
+    if (!enrollment) return { year, student, section: null, terms: [], annual: null, classified: 0 };
+    const section = await this.findSection(enrollment.sectionId);
+    return { year, student, section, ...studentYear(await this.termsOfYear(year.id, section.id), studentId) };
+  }
+
+  /**
+   * The terms of a year for a section, in order: each from its published copy,
+   * or computed now from locked assessments. Terms with nothing locked and
+   * nothing published yet are left out.
+   */
+  private async termsOfYear(yearId: string, sectionId: string): Promise<TermOfYear[]> {
+    const terms = await this.db.term.findMany({
+      where: { academicYearId: yearId },
+      select: { id: true, name: true, startDate: true },
+    });
+    terms.sort((a, b) => a.startDate.getTime() - b.startDate.getTime());
+    const counted: TermOfYear[] = [];
+    for (const term of terms) {
+      const published = await this.findPublication(term.id, sectionId);
+      const r = published ? (published.snapshot as unknown as SectionResults) : await this.compute(term.id, sectionId, false);
+      if (!published && r.counted.length === 0) continue;
+      counted.push({ termId: term.id, name: term.name, published: published !== null, results: r.results });
+    }
+    return counted;
+  }
+
+  /** The given academic year, or the current one. */
+  private async findYear(yearId?: string): Promise<{ id: string; name: string }> {
     const yearRow = yearId
       ? await this.db.academicYear.findFirst({ where: { id: yearId }, select: { id: true, name: true } })
       : await this.db.academicYear.findFirst({ where: { isCurrent: true }, select: { id: true, name: true } });
@@ -369,25 +435,14 @@ export class ResultsService {
         ? fail(404, { code: 'YEAR_NOT_FOUND', message: 'This academic year does not exist in your school.' })
         : fail(400, { code: 'YEAR_REQUIRED', message: 'There is no current academic year. Choose a year.' });
     }
-    const terms = await this.db.term.findMany({
-      where: { academicYearId: yearRow.id },
-      select: { id: true, name: true, startDate: true },
-    });
-    terms.sort((a, b) => a.startDate.getTime() - b.startDate.getTime());
+    return { id: yearRow.id, name: yearRow.name };
+  }
 
+  private async findSection(sectionId: string): Promise<{ id: string; label: string }> {
     const sectionRow = await this.db.section.findFirst({ where: { id: sectionId }, select: { id: true, classId: true, name: true } });
     if (!sectionRow) throw fail(404, { code: 'SECTION_NOT_FOUND', message: 'This section does not exist in your school.' });
     const schoolClass = await this.db.schoolClass.findFirst({ where: { id: sectionRow.classId }, select: { name: true } });
-    const section = { id: sectionRow.id, label: `${schoolClass?.name ?? '?'} ${sectionRow.name}` };
-
-    const counted: TermOfYear[] = [];
-    for (const term of terms) {
-      const published = await this.findPublication(term.id, sectionId);
-      const r = published ? (published.snapshot as unknown as SectionResults) : await this.compute(term.id, sectionId, false);
-      if (!published && r.counted.length === 0) continue;
-      counted.push({ termId: term.id, name: term.name, published: published !== null, results: r.results });
-    }
-    return { year: { id: yearRow.id, name: yearRow.name }, section, ...computeAnnual(counted) };
+    return { id: sectionRow.id, label: `${schoolClass?.name ?? '?'} ${sectionRow.name}` };
   }
 
   private async findPublication(termId: string, sectionId: string) {

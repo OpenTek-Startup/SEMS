@@ -18,7 +18,7 @@ import { useGetMyTeachingQuery } from "@/lib/api/teachingApi";
 import { PERMISSIONS, useCan } from "@/lib/auth/permissions";
 import { useActiveModules } from "@/lib/modules/useModules";
 import { useAppSelector } from "@/store/hooks";
-import AppHeader from "@/components/layout/AppHeader";
+import ValidationBoard from "@/components/assessment/ValidationBoard";
 import {
   Badge,
   dangerButton,
@@ -139,9 +139,9 @@ export default function AssessmentBoard() {
 
   return (
     <div className="flex flex-1 flex-col">
-      <AppHeader />
       <main className="mx-auto w-full max-w-6xl flex-1 px-6 py-8">
-        <h1 className="text-2xl font-semibold">Assessment</h1>
+        <p className="text-sm text-muted">Academics</p>
+        <h1 className="mt-1 text-[28px] leading-tight font-semibold">Assessments &amp; marks</h1>
         {blocked ? (
           <p role="alert" className="mt-4 rounded-lg bg-warn-bg p-4 text-sm text-warn">
             {blocked}
@@ -201,7 +201,12 @@ export default function AssessmentBoard() {
 
             <Notice message={message} />
 
-            <div className="mt-4 overflow-x-auto rounded-xl border border-line bg-white">
+            {canValidate && chosenTerm && classes.data && classes.data.length > 0 && (
+              <ValidationBoard termId={chosenTerm} classes={classes.data} canLock={canLock} onMessage={setMessage} />
+            )}
+
+            <h2 className="mt-8 text-sm font-semibold tracking-wider text-muted uppercase">All assessments</h2>
+            <div className="mt-2 overflow-x-auto rounded-xl border border-line bg-white">
               {list.isLoading && <p className="p-5 text-sm text-muted">Loading assessments…</p>}
               {list.error && (
                 <p role="alert" className="p-5 text-sm text-err">

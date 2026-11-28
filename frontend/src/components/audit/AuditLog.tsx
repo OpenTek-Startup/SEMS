@@ -5,7 +5,6 @@ import { apiErrorMessage } from "@/lib/api/baseApi";
 import { useGetAuditQuery, type AuditPerson } from "@/lib/api/auditApi";
 import { AUDIT_CATEGORIES, describeAudit, isWarning } from "@/lib/audit/auditLabels";
 import { PERMISSIONS, useCan } from "@/lib/auth/permissions";
-import AppHeader from "@/components/layout/AppHeader";
 import { fieldClass, labelClass, secondaryButtonClass } from "@/components/ui/styles";
 
 const PAGE_SIZE = 25;
@@ -48,7 +47,6 @@ export default function AuditLog() {
   if (!canView) {
     return (
       <div className="flex flex-1 flex-col">
-        <AppHeader />
         <main className="mx-auto w-full max-w-5xl px-6 py-8">
           <p role="alert" className="rounded-lg bg-warn-bg p-4 text-sm text-warn">
             You do not have permission to see the audit log of this school.
@@ -64,9 +62,9 @@ export default function AuditLog() {
 
   return (
     <div className="flex flex-1 flex-col">
-      <AppHeader />
       <main className="mx-auto w-full max-w-5xl flex-1 px-6 py-8">
-        <h1 className="text-2xl font-semibold">Audit log</h1>
+        <p className="text-sm text-muted">Administration</p>
+        <h1 className="mt-1 text-[28px] leading-tight font-semibold">Audit log</h1>
         <p className="mt-1 text-sm text-muted">
           Who did what, and when, in this school. Entries cannot be edited or deleted.
         </p>

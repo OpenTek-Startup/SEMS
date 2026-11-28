@@ -578,3 +578,40 @@ export function termSummary(classes: readonly SummaryClassInput[]): TermSummary 
     },
   };
 }
+
+// ---------------------------------------------- one student's year (student page)
+
+export interface StudentTerm {
+  termId: string;
+  name: string;
+  published: boolean;
+  /** the student's subject lines, average, rank and appreciation; null when not on the class list that term */
+  result: StudentResult | null;
+  /** students with an average in the class that term (the "out of" of the rank) */
+  classified: number;
+  classAverage: number | null;
+}
+
+export interface StudentYear {
+  terms: StudentTerm[];
+  /** the year average, rank and decision in the class; null when the student is not on its list */
+  annual: AnnualLine | null;
+  classified: number;
+}
+
+/** One student's results over the year, taken from the class results of each term. */
+export function studentYear(terms: readonly TermOfYear[], studentId: string): StudentYear {
+  const year = computeAnnual(terms);
+  return {
+    terms: terms.map((t) => ({
+      termId: t.termId,
+      name: t.name,
+      published: t.published,
+      result: t.results.students.find((s) => s.student.studentId === studentId) ?? null,
+      classified: t.results.stats.classified,
+      classAverage: t.results.stats.classAverage,
+    })),
+    annual: year.students.find((l) => l.student.studentId === studentId) ?? null,
+    classified: year.stats.classified,
+  };
+}

@@ -14,7 +14,6 @@ import {
 import { useGetStudentsQuery } from "@/lib/api/studentsApi";
 import { PERMISSIONS, useCan } from "@/lib/auth/permissions";
 import { useActiveModules } from "@/lib/modules/useModules";
-import AppHeader from "@/components/layout/AppHeader";
 import { Badge, Notice, smallButton, smallPrimaryButton, dangerButton, type Message } from "@/components/academic/academicUi";
 
 const selectClass =
@@ -45,9 +44,9 @@ export default function EnrollmentBoard() {
 
   return (
     <div className="flex flex-1 flex-col">
-      <AppHeader />
       <main className="mx-auto w-full max-w-6xl flex-1 px-6 py-8">
-        <h1 className="text-2xl font-semibold">Classes</h1>
+        <p className="text-sm text-muted">People</p>
+        <h1 className="mt-1 text-[28px] leading-tight font-semibold">Classes &amp; enrollment</h1>
         {blocked ? (
           <p role="alert" className="mt-4 rounded-lg bg-warn-bg p-4 text-sm text-warn">
             {blocked}
@@ -85,15 +84,25 @@ export default function EnrollmentBoard() {
                           setMessage(null);
                         }}
                         aria-current={s.sectionId === section.sectionId}
-                        className={`flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-sm ${
+                        className={`block w-full rounded-lg px-3 py-2 text-left text-sm ${
                           s.sectionId === section.sectionId ? "bg-brand-tint font-semibold text-brand" : "hover:bg-ground"
                         }`}
                       >
-                        <span>{s.label}</span>
-                        <Badge tone={s.capacity !== null && s.enrolled >= s.capacity ? "ok" : "muted"}>
-                          {s.enrolled}
-                          {s.capacity !== null ? `/${s.capacity}` : ""}
-                        </Badge>
+                        <span className="flex items-center justify-between gap-2">
+                          <span>{s.label}</span>
+                          <Badge tone={s.capacity !== null && s.enrolled >= s.capacity ? "ok" : "muted"}>
+                            {s.enrolled}
+                            {s.capacity !== null ? `/${s.capacity}` : ""}
+                          </Badge>
+                        </span>
+                        {s.capacity !== null && s.capacity > 0 && (
+                          <span className="mt-1.5 block h-1.5 rounded bg-ground" aria-hidden="true">
+                            <span
+                              className={`block h-1.5 rounded ${s.enrolled >= s.capacity ? "bg-ok" : "bg-brand"}`}
+                              style={{ width: `${Math.min(100, (s.enrolled / s.capacity) * 100)}%` }}
+                            />
+                          </span>
+                        )}
                       </button>
                     </li>
                   ))}

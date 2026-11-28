@@ -41,3 +41,13 @@ export class AnnualQueryDto {
   @IsUUID('all', { message: 'yearId must be an id.' })
   yearId?: string;
 }
+
+export class StudentResultsQueryDto {
+  @IsUUID('all', { message: 'studentId must be an id.' })
+  studentId: string;
+
+  /** Leave out for the current academic year. */
+  @IsOptional()
+  @IsUUID('all', { message: 'yearId must be an id.' })
+  yearId?: string;
+}

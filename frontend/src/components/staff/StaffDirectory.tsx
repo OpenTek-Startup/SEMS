@@ -16,7 +16,6 @@ import {
 import { PERMISSIONS, useCan } from "@/lib/auth/permissions";
 import { useActiveModules } from "@/lib/modules/useModules";
 import { useAppSelector } from "@/store/hooks";
-import AppHeader from "@/components/layout/AppHeader";
 import { fieldClass, labelClass, primaryButtonClass, secondaryButtonClass } from "@/components/ui/styles";
 
 const CATEGORY_LABEL: Record<StaffCategory, string> = {
@@ -65,7 +64,6 @@ export default function StaffDirectory() {
   if (modules.isLoading) {
     return (
       <div className="flex flex-1 flex-col">
-        <AppHeader />
         <main className="mx-auto w-full max-w-5xl px-6 py-8">
           <p className="text-sm text-muted">Loading…</p>
         </main>
@@ -76,7 +74,6 @@ export default function StaffDirectory() {
   if (!canView || !moduleOn) {
     return (
       <div className="flex flex-1 flex-col">
-        <AppHeader />
         <main className="mx-auto w-full max-w-5xl px-6 py-8">
           <p role="alert" className="rounded-lg bg-warn-bg p-4 text-sm text-warn">
             {!moduleOn
@@ -107,11 +104,11 @@ export default function StaffDirectory() {
 
   return (
     <div className="flex flex-1 flex-col">
-      <AppHeader />
       <main className="mx-auto w-full max-w-6xl flex-1 px-6 py-8">
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div>
-            <h1 className="text-2xl font-semibold">Staff</h1>
+            <p className="text-sm text-muted">People</p>
+            <h1 className="mt-1 text-[28px] leading-tight font-semibold">Staff</h1>
             <p className="mt-1 text-sm text-muted">
               Teaching and non-teaching staff of {me?.school?.name ?? "this school"}.
             </p>
