@@ -79,6 +79,29 @@ export interface AnnualResults {
   stats: { size: number; classified: number; classAverage: number | null; promoted: number; repeat: number };
 }
 
+/** One student's results over a year (GET /results/student). */
+export interface StudentYearResults {
+  year: { id: string; name: string };
+  student: { id: string; fullName: string; matricule: string };
+  /** the student's class that year; null when not enrolled */
+  section: { id: string; label: string } | null;
+  terms: {
+    termId: string;
+    name: string;
+    published: boolean;
+    result: StudentResult | null;
+    classified: number;
+    classAverage: number | null;
+  }[];
+  annual: {
+    average: number | null;
+    rank: number | null;
+    decision: "promoted" | "repeat" | null;
+    appreciation: string | null;
+  } | null;
+  classified: number;
+}
+
 /** The school's figures for a term (GET /results/summary). */
 export interface TermSummary {
   term: { id: string; name: string };
@@ -121,6 +144,11 @@ export const resultsApi = resultsBase.injectEndpoints({
       transformResponse: (response: ApiSuccess<SectionResults>) => response.data,
       providesTags: ["Assessment", "Enrollment", "Academic", "Publication"],
     }),
+    getStudentResults: build.query<StudentYearResults, string>({
+      query: (studentId) => `/results/student?studentId=${studentId}`,
+      transformResponse: (response: ApiSuccess<StudentYearResults>) => response.data,
+      providesTags: ["Assessment", "Enrollment", "Academic", "Publication"],
+    }),
     getSummary: build.query<TermSummary, string>({
       query: (termId) => `/results/summary?termId=${termId}`,
       transformResponse: (response: ApiSuccess<TermSummary>) => response.data,
@@ -153,6 +181,7 @@ export const {
   useGetResultsQuery,
   useGetAnnualQuery,
   useGetSummaryQuery,
+  useGetStudentResultsQuery,
   useGetPublicationsQuery,
   usePublishResultsMutation,
   useUnpublishResultsMutation,

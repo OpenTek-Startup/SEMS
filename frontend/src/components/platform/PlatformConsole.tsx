@@ -13,7 +13,6 @@ import {
   type PlatformSchool,
 } from "@/lib/api/modulesApi";
 import { useAppSelector } from "@/store/hooks";
-import AppHeader from "@/components/layout/AppHeader";
 import OneTimePasswordNotice, { type OneTimePassword } from "@/components/ui/OneTimePasswordNotice";
 import { fieldClass, labelClass, primaryButtonClass, secondaryButtonClass } from "@/components/ui/styles";
 
@@ -37,7 +36,6 @@ export default function PlatformConsole() {
   if (!isSuperAdmin) {
     return (
       <div className="flex flex-1 flex-col">
-        <AppHeader />
         <main className="mx-auto w-full max-w-5xl px-6 py-8">
           <p role="alert" className="rounded-lg bg-warn-bg p-4 text-sm text-warn">
             Only the platform Super Admin can manage schools and modules.
@@ -90,11 +88,11 @@ export default function PlatformConsole() {
 
   return (
     <div className="flex flex-1 flex-col">
-      <AppHeader />
       <main className="mx-auto w-full max-w-6xl flex-1 px-6 py-8">
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div>
-            <h1 className="text-2xl font-semibold">Schools &amp; modules</h1>
+            <p className="text-sm text-muted">Platform</p>
+            <h1 className="mt-1 text-[28px] leading-tight font-semibold">Schools &amp; modules</h1>
             <p className="mt-1 text-sm text-muted">
               Create schools and switch their modules on or off. A module needs its dependencies first; the core is
               always on.

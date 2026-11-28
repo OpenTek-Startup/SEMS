@@ -12,7 +12,6 @@ import {
   type SheetLine,
 } from "@/lib/api/assessmentApi";
 import { PERMISSIONS, useCan } from "@/lib/auth/permissions";
-import AppHeader from "@/components/layout/AppHeader";
 import { Badge, Notice, smallButton, smallPrimaryButton, type Message } from "@/components/academic/academicUi";
 
 const shown = (l: SheetLine) => (l.absent ? "ABS" : l.score === null ? "" : String(l.score));
@@ -25,8 +24,7 @@ export default function MarkSheetPage() {
 
   return (
     <div className="flex flex-1 flex-col">
-      <AppHeader />
-      <main className="mx-auto w-full max-w-4xl flex-1 px-6 py-8">
+      <main className="mx-auto w-full max-w-6xl flex-1 px-6 py-8">
         <Link href="/assessment" className="text-sm text-brand hover:underline">
           ← All assessments
         </Link>
@@ -98,86 +96,130 @@ function SheetEditor({ sheet }: { sheet: MarkSheet }) {
   }
 
   const s = sheet.summary;
+  const half = a.maxScore / 2;
+  const missingNow = sheet.students.filter((l) => l.inSection && (values[l.studentId] ?? "").trim() === "").length;
+  const figures: { label: string; value: string }[] = [
+    { label: "Marks entered", value: `${s.marked + s.absent} / ${s.students}` },
+    { label: "Class average", value: s.average !== null ? String(s.average) : "—" },
+    { label: "Highest", value: s.highest !== null ? String(s.highest) : "—" },
+    { label: "Lowest", value: s.lowest !== null ? String(s.lowest) : "—" },
+    { label: `At or above ${half}`, value: s.marked > 0 ? `${Math.round((s.passed / s.marked) * 100)}%` : "—" },
+  ];
+
+  /** The flag beside a line, from what is typed now. */
+  function flag(l: SheetLine): { text: string; tone: string } | null {
+    const v = (values[l.studentId] ?? "").trim().toUpperCase();
+    if (v === "ABS") return { text: "Absent", tone: "text-muted" };
+    if (v === "") return l.inSection ? { text: "Missing", tone: "text-warn" } : null;
+    const n = Number(v.replace(",", "."));
+    if (Number.isFinite(n) && n < half) return { text: `Below ${half}`, tone: "text-err" };
+    return null;
+  }
+
   return (
     <>
-      <div className="mt-4 flex flex-wrap items-start justify-between gap-3">
+      <div className="mt-4 flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-semibold">
-            {a.name} · {a.subject.name}
+          <p className="text-sm text-muted">Mark entry</p>
+          <h1 className="mt-1 text-[28px] leading-tight font-semibold">
+            {a.section.label} · {a.subject.name} · {a.name}
           </h1>
-          <p className="mt-1 text-sm text-muted">
-            {a.section.label} · {a.term.name} · out of {a.maxScore}
-            {a.weight > 1 ? ` · weight ${a.weight}` : ""}
+          <p className="mt-1 flex flex-wrap items-center gap-2 text-sm text-muted">
+            <span>
+              Out of {a.maxScore} · {a.term.name}
+              {a.weight > 1 ? ` · weight ${a.weight}` : ""}
+            </span>
+            <Badge tone={a.status === "open" ? "muted" : "ok"}>{a.status}</Badge>
+            {editable && missingNow > 0 && (
+              <span className="rounded-full bg-warn-bg px-2 py-0.5 text-xs font-semibold text-warn">
+                {missingNow} mark{missingNow === 1 ? "" : "s"} missing
+              </span>
+            )}
           </p>
         </div>
-        <Badge tone={a.status === "open" ? "muted" : "ok"}>{a.status}</Badge>
+        {editable && sheet.editing === "open" && sheet.students.length > 0 && (
+          <button
+            type="button"
+            className={smallPrimaryButton}
+            disabled={saving.isLoading || moving.isLoading || missingNow > 0}
+            title={missingNow > 0 ? "Every student needs a mark or ABS before submitting" : undefined}
+            onClick={() => void submit()}
+          >
+            Submit for validation
+          </button>
+        )}
       </div>
 
-      <p className="mt-4 text-sm">
-        {s.marked} marked, {s.absent} absent, {s.missing} missing of {s.students}
-        {s.average !== null && ` · average ${s.average}/${a.maxScore} · highest ${s.highest} · lowest ${s.lowest}`}
-        {s.marked > 0 && ` · ${s.passed} at or above ${a.maxScore / 2}`}
-      </p>
+      <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-5">
+        {figures.map((f) => (
+          <div key={f.label} className="rounded-xl border border-line bg-white px-4 py-3">
+            <p className="text-[13px] text-muted">{f.label}</p>
+            <p className="mt-0.5 font-mono text-xl font-semibold">{f.value}</p>
+          </div>
+        ))}
+      </div>
+
       {sheet.editing === "closed" && (
-        <p className="mt-3 rounded-lg bg-ground p-3 text-sm text-muted">
+        <p className="mt-4 rounded-lg bg-ground p-3 text-sm text-muted">
           Submitted: waiting for the exam officer. To change a mark, ask for the assessment to be sent back.
         </p>
       )}
       {sheet.editing === "override" && (
-        <p className="mt-3 rounded-lg bg-warn-bg p-3 text-sm text-warn">
+        <p className="mt-4 rounded-lg bg-warn-bg p-3 text-sm text-warn">
           These marks are locked.{" "}
           {canOverride ? "A change needs a reason and is kept in the audit log." : "Only the exam officer can change them."}
         </p>
       )}
       <Notice message={message} />
 
-      <div className="mt-4 overflow-x-auto rounded-xl border border-line bg-white">
+      <div className="mt-4 rounded-xl border border-line bg-white">
         {sheet.students.length === 0 ? (
           <p className="p-5 text-sm text-muted">No student in {a.section.label} yet. Add them on the Classes page.</p>
         ) : (
-          <table className="w-full text-left text-sm">
-            <thead className="border-b border-line bg-ground text-xs uppercase tracking-wider text-muted">
-              <tr>
-                <th className="px-4 py-2 font-semibold">#</th>
-                <th className="px-4 py-2 font-semibold">Student</th>
-                <th className="px-4 py-2 font-semibold">Matricule</th>
-                <th className="w-40 px-4 py-2 font-semibold">Mark /{a.maxScore}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {sheet.students.map((l, i) => (
-                <tr key={l.studentId} className={`border-b border-line last:border-0 ${l.inSection ? "" : "text-muted"}`}>
-                  <td className="px-4 py-1.5 text-muted">{i + 1}</td>
-                  <td className="px-4 py-1.5">
-                    {l.fullName}
-                    {!l.inSection && <span className="ml-1 text-xs">(left the section)</span>}
-                  </td>
-                  <td className="px-4 py-1.5 font-mono text-xs">{l.matricule}</td>
-                  <td className="px-4 py-1.5">
-                    {editable ? (
-                      <>
-                        <input
-                          id={`mark-${i}`}
-                          aria-label={`Mark of ${l.fullName}`}
-                          value={values[l.studentId] ?? ""}
-                          onChange={(e) => setValues({ ...values, [l.studentId]: e.target.value })}
-                          onKeyDown={(e) => next(e, i)}
-                          inputMode="decimal"
-                          placeholder="—"
-                          className={`h-8 w-24 rounded-md border bg-white px-2 text-right font-mono outline-none focus:ring-2 focus:ring-brand/20 ${
-                            errors[l.studentId] ? "border-err" : "border-line focus:border-brand"
-                          }`}
-                        />
-                        {errors[l.studentId] && <p className="mt-0.5 text-xs text-err">{errors[l.studentId]}</p>}
-                      </>
-                    ) : (
-                      <span className="font-mono">{shown(l) || "—"}</span>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <ol className="grid md:grid-cols-2">
+            {sheet.students.map((l, i) => {
+              const f = flag(l);
+              return (
+                <li
+                  key={l.studentId}
+                  className={`flex items-center gap-3 border-b border-line px-4 py-2 md:odd:border-r ${l.inSection ? "" : "text-muted"}`}
+                >
+                  <span className="w-6 shrink-0 text-right text-xs text-muted">{i + 1}</span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-sm">{l.fullName}</span>
+                    <span className="block font-mono text-[11px] text-muted">
+                      {l.matricule}
+                      {!l.inSection && " · left the section"}
+                    </span>
+                  </span>
+                  {f && <span className={`shrink-0 text-xs font-medium ${f.tone}`}>{f.text}</span>}
+                  {editable ? (
+                    <span className="shrink-0">
+                      <input
+                        id={`mark-${i}`}
+                        aria-label={`Mark of ${l.fullName}`}
+                        value={values[l.studentId] ?? ""}
+                        onChange={(e) => setValues({ ...values, [l.studentId]: e.target.value })}
+                        onKeyDown={(e) => next(e, i)}
+                        inputMode="decimal"
+                        placeholder="—"
+                        className={`h-9 w-20 rounded-md border px-2 text-right font-mono outline-none focus:ring-2 focus:ring-brand/20 ${
+                          errors[l.studentId]
+                            ? "border-err bg-err-bg"
+                            : f?.text === "Missing"
+                              ? "border-warn bg-warn-bg focus:border-brand"
+                              : "border-line bg-white focus:border-brand"
+                        }`}
+                      />
+                      {errors[l.studentId] && <span className="mt-0.5 block text-[11px] text-err">{errors[l.studentId]}</span>}
+                    </span>
+                  ) : (
+                    <span className="w-20 shrink-0 text-right font-mono">{shown(l) || "—"}</span>
+                  )}
+                </li>
+              );
+            })}
+          </ol>
         )}
       </div>
 
@@ -197,11 +239,6 @@ function SheetEditor({ sheet }: { sheet: MarkSheet }) {
           <button type="button" className={smallButton} disabled={saving.isLoading || changed.length === 0} onClick={() => void save()}>
             {saving.isLoading ? "Saving…" : changed.length ? `Save ${changed.length} change${changed.length === 1 ? "" : "s"}` : "Saved"}
           </button>
-          {sheet.editing === "open" && (
-            <button type="button" className={smallPrimaryButton} disabled={saving.isLoading || moving.isLoading} onClick={() => void submit()}>
-              Save and submit
-            </button>
-          )}
           <p className="w-full text-xs text-muted">Type a mark such as 12.5 or 12,5; ABS for absent; leave empty if not marked yet. Enter goes to the next student.</p>
         </div>
       )}

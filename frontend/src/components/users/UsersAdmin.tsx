@@ -14,7 +14,6 @@ import {
 } from "@/lib/api/usersApi";
 import { PERMISSIONS, useCan } from "@/lib/auth/permissions";
 import { useAppSelector } from "@/store/hooks";
-import AppHeader from "@/components/layout/AppHeader";
 import OneTimePasswordNotice, { type OneTimePassword } from "@/components/ui/OneTimePasswordNotice";
 import {
   fieldClass,
@@ -49,7 +48,6 @@ export default function UsersAdmin() {
   if (!canView) {
     return (
       <div className="flex flex-1 flex-col">
-        <AppHeader />
         <main className="mx-auto w-full max-w-5xl px-6 py-8">
           <p role="alert" className="rounded-lg bg-warn-bg p-4 text-sm text-warn">
             You do not have permission to see the users of this school.
@@ -94,11 +92,11 @@ export default function UsersAdmin() {
 
   return (
     <div className="flex flex-1 flex-col">
-      <AppHeader />
       <main className="mx-auto w-full max-w-5xl flex-1 px-6 py-8">
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div>
-            <h1 className="text-2xl font-semibold">Users</h1>
+            <p className="text-sm text-muted">Administration</p>
+            <h1 className="mt-1 text-[28px] leading-tight font-semibold">Users &amp; roles</h1>
             <p className="mt-1 text-sm text-muted">
               Accounts of {me?.school?.name ?? "this school"}.
             </p>

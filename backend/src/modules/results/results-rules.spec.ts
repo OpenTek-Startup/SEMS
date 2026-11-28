@@ -11,6 +11,7 @@ import {
   changesSincePublication,
   computeAnnual,
   percent,
+  studentYear,
   termSummary,
   type ResultAssessment,
   type ResultMark,
@@ -328,5 +329,37 @@ describe('term summary', () => {
       totals: { size: 0, classified: 0, passed: 0, passRate: null, average: null },
     });
     expect(percent(1, 3)).toBe(33.3);
+  });
+});
+
+describe("one student's year", () => {
+  const t1 = { termId: 't1', name: 'First Term', published: true, results: computeTerm(input) };
+  const t2 = {
+    termId: 't2',
+    name: 'Second Term',
+    published: false,
+    results: computeTerm({ ...input, marks: input.marks.map((m) => (m.studentId === 'eto' && m.assessmentId.startsWith('m') ? { ...m, score: m.assessmentId === 'm1' ? 18 : 36 } : m)) }),
+  };
+
+  it('gives each term of the student, then the year average, rank and decision', () => {
+    const eto = studentYear([t1, t2], 'eto');
+    expect(eto.terms.map((t) => [t.name, t.published, t.result?.average, t.result?.rank, t.classified, t.classAverage])).toEqual([
+      ['First Term', true, 6.86, 4, 4, 12.33],
+      ['Second Term', false, 13.71, 3, 4, 14.05],
+    ]);
+    expect(eto.terms[0].result?.subjects.map((l) => [l.code, l.average])).toEqual([
+      ['MATH', 6],
+      ['ENG', 8],
+      ['CIV', null],
+    ]);
+    expect(eto.annual).toMatchObject({ average: 10.29, rank: 4, decision: 'promoted' });
+    expect(eto.classified).toBe(4);
+  });
+
+  it('a student who is not on the class list gets no result', () => {
+    const nobody = studentYear([t1], 'nobody');
+    expect(nobody.terms[0].result).toBeNull();
+    expect(nobody.annual).toBeNull();
+    expect(studentYear([], 'eto')).toEqual({ terms: [], annual: null, classified: 0 });
   });
 });

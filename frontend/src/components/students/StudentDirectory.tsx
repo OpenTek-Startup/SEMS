@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { apiErrorMessage } from "@/lib/api/baseApi";
 import {
   useCreateStudentMutation,
@@ -12,10 +12,10 @@ import {
   type Student,
   type StudentStatus,
 } from "@/lib/api/studentsApi";
+import { useGetStudentResultsQuery } from "@/lib/api/resultsApi";
 import { PERMISSIONS, useCan } from "@/lib/auth/permissions";
 import { useActiveModules } from "@/lib/modules/useModules";
 import { useAppSelector } from "@/store/hooks";
-import AppHeader from "@/components/layout/AppHeader";
 import { fieldClass, labelClass, secondaryButtonClass } from "@/components/ui/styles";
 
 function formatDay(value: string | null): string {
@@ -62,7 +62,6 @@ export default function StudentDirectory() {
   if (modules.isLoading) {
     return (
       <div className="flex flex-1 flex-col">
-        <AppHeader />
         <main className="mx-auto w-full max-w-5xl px-6 py-8">
           <p className="text-sm text-muted">Loading…</p>
         </main>
@@ -73,7 +72,6 @@ export default function StudentDirectory() {
   if (!canView || !moduleOn) {
     return (
       <div className="flex flex-1 flex-col">
-        <AppHeader />
         <main className="mx-auto w-full max-w-5xl px-6 py-8">
           <p role="alert" className="rounded-lg bg-warn-bg p-4 text-sm text-warn">
             {!moduleOn
@@ -104,11 +102,11 @@ export default function StudentDirectory() {
 
   return (
     <div className="flex flex-1 flex-col">
-      <AppHeader />
       <main className="mx-auto w-full max-w-6xl flex-1 px-6 py-8">
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div>
-            <h1 className="text-2xl font-semibold">Students</h1>
+            <p className="text-sm text-muted">People</p>
+            <h1 className="mt-1 text-[28px] leading-tight font-semibold">Students &amp; guardians</h1>
             <p className="mt-1 text-sm text-muted">
               Students of {me?.school?.name ?? "this school"}. Put them in classes on the Classes page.
             </p>
@@ -260,45 +258,199 @@ function StudentCard({ id, onClose }: { id: string; onClose: () => void }) {
   const student = useGetStudentQuery(id);
   const s = student.data;
   return (
-    <section className="mt-6 rounded-xl border border-line bg-white p-5">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <h2 className="font-semibold">{s ? s.fullName : "Loading…"}</h2>
-          {s && (
-            <p className="text-sm text-muted">
-              {s.matricule} · {s.gender === "female" ? "Girl" : "Boy"} · born {formatDay(s.dateOfBirth)}
-              {s.placeOfBirth ? ` in ${s.placeOfBirth}` : ""}
-            </p>
-          )}
+    <section aria-label="Student" className="mt-6 grid gap-5 lg:grid-cols-[300px_minmax(0,1fr)]">
+      <div className="rounded-xl border border-line bg-white p-5">
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-brand text-lg font-semibold text-white" aria-hidden="true">
+              {s ? `${s.lastName[0] ?? ""}${s.firstName[0] ?? ""}`.toUpperCase() : "…"}
+            </div>
+            <div>
+              <h2 className="text-lg leading-tight font-semibold">{s ? s.fullName : "Loading…"}</h2>
+              {s && (
+                <p className="mt-0.5 text-xs">
+                  <span className={`rounded-full px-2 py-0.5 font-semibold ${s.status === "active" ? "bg-ok-bg text-ok" : "bg-ground text-muted"}`}>
+                    {s.status === "active" ? "Active" : "Left the school"}
+                  </span>
+                </p>
+              )}
+            </div>
+          </div>
+          <button type="button" onClick={onClose} aria-label="Close" className="h-8 w-8 rounded-lg border border-line text-muted hover:bg-ground">
+            ×
+          </button>
         </div>
-        <button type="button" onClick={onClose} className={secondaryButtonClass}>
-          Close
-        </button>
+        {student.error && (
+          <p role="alert" className="mt-3 text-sm text-err">
+            {apiErrorMessage(student.error)}
+          </p>
+        )}
+        {s && (
+          <dl className="mt-4 space-y-3 text-sm">
+            <RecordLine label="Matricule" value={<span className="font-mono">{s.matricule}</span>} />
+            <RecordLine label="Class this year" value={s.current?.label ?? "No class"} />
+            <RecordLine
+              label="Born"
+              value={`${formatDay(s.dateOfBirth)}${s.placeOfBirth ? `, ${s.placeOfBirth}` : ""}`}
+            />
+            <RecordLine label="Gender" value={s.gender === "female" ? "Female" : "Male"} />
+            <RecordLine
+              label="Guardian"
+              value={
+                s.guardian
+                  ? [s.guardian.name, s.guardian.relationship && `(${s.guardian.relationship})`, s.guardian.phone && `· ${s.guardian.phone}`]
+                      .filter(Boolean)
+                      .join(" ")
+                  : "None"
+              }
+            />
+            <div>
+              <dt className="text-[13px] text-muted">Classes</dt>
+              <dd className="mt-0.5">
+                {s.enrollments.length === 0 ? (
+                  <span className="text-muted">Never enrolled in a class.</span>
+                ) : (
+                  <ul className="space-y-1">
+                    {s.enrollments.map((e) => (
+                      <li key={e.id}>
+                        <strong>{e.year.name}</strong> · {e.section.label}
+                        <span className="block text-xs text-muted">
+                          from {formatDay(e.enrolledOn)}
+                          {e.leftOn && ` to ${formatDay(e.leftOn)}`}
+                          {e.status !== "active" && ` (${e.status}${e.reason ? `: ${e.reason}` : ""})`}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </dd>
+            </div>
+          </dl>
+        )}
       </div>
-      {student.error && (
-        <p role="alert" className="mt-3 text-sm text-err">
-          {apiErrorMessage(student.error)}
+      <div className="min-w-0">{s && <StudentResults studentId={s.id} />}</div>
+    </section>
+  );
+}
+
+function RecordLine({ label, value }: { label: string; value: ReactNode }) {
+  return (
+    <div>
+      <dt className="text-[13px] text-muted">{label}</dt>
+      <dd className="mt-0.5">{value}</dd>
+    </div>
+  );
+}
+
+const avg = (v: number | null | undefined) => (v === null || v === undefined ? "—" : v.toFixed(2));
+
+/**
+ * The student's results this year, for those who may see results (results.compute,
+ * module "results"): each term's average, rank and subject averages, then the year.
+ */
+function StudentResults({ studentId }: { studentId: string }) {
+  const canSee = useCan(PERMISSIONS.resultsCompute);
+  const modules = useActiveModules();
+  const on = canSee && modules.codes.has("results");
+  const results = useGetStudentResultsQuery(studentId, { skip: !on });
+  if (!on) return null;
+  const r = results.data;
+  const decision = r?.annual?.decision;
+  return (
+    <div className="rounded-xl border border-line bg-white p-5">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h3 className="text-lg font-semibold">
+          Results{r ? ` ${r.year.name}${r.section ? ` · ${r.section.label}` : ""}` : ""}
+        </h3>
+        {decision && (
+          <span className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${decision === "promoted" ? "bg-ok-bg text-ok" : "bg-err-bg text-err"}`}>
+            {decision === "promoted" ? "Promoted" : "Repeats the class"}
+          </span>
+        )}
+      </div>
+      {results.isLoading && <p className="mt-1 text-sm text-muted">Loading…</p>}
+      {results.error && (
+        <p role="alert" className="mt-1 text-sm text-err">
+          {apiErrorMessage(results.error)}
         </p>
       )}
-      {s && (
+      {r && !r.section && <p className="mt-1 text-sm text-muted">Not in a class this year.</p>}
+      {r && r.section && r.terms.length === 0 && <p className="mt-1 text-sm text-muted">No term with final marks yet.</p>}
+      {r && r.terms.length > 0 && (
         <>
-          <h3 className="mt-4 text-xs font-semibold uppercase tracking-wider text-muted">Classes</h3>
-          {s.enrollments.length === 0 ? (
-            <p className="mt-1 text-sm text-muted">Never enrolled in a class.</p>
-          ) : (
-            <ul className="mt-2 space-y-1 text-sm">
-              {s.enrollments.map((e) => (
-                <li key={e.id}>
-                  <strong>{e.year.name}</strong> · {e.section.label} · from {formatDay(e.enrolledOn)}
-                  {e.leftOn && ` to ${formatDay(e.leftOn)}`}
-                  {e.status !== "active" && <span className="text-muted"> ({e.status}{e.reason ? `: ${e.reason}` : ""})</span>}
-                </li>
-              ))}
-            </ul>
+          <div className="mt-2 overflow-x-auto rounded-lg border border-line">
+            <table className="w-full text-left text-sm">
+              <thead className="border-b border-line bg-ground text-xs uppercase tracking-wider text-muted">
+                <tr>
+                  <th className="px-3 py-2 font-semibold">Term</th>
+                  <th className="px-3 py-2 text-right font-semibold">Average</th>
+                  <th className="px-3 py-2 text-right font-semibold">Rank</th>
+                  <th className="px-3 py-2 text-right font-semibold">Class average</th>
+                  <th className="px-3 py-2 font-semibold">Appreciation</th>
+                  <th className="px-3 py-2 font-semibold">Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {r.terms.map((t) => (
+                  <tr key={t.termId} className="border-b border-line last:border-0">
+                    <td className="px-3 py-1.5 font-medium">{t.name}</td>
+                    <td className={`px-3 py-1.5 text-right font-mono ${t.result && !t.result.passed && t.result.average !== null ? "text-err" : ""}`}>
+                      {avg(t.result?.average)}
+                    </td>
+                    <td className="px-3 py-1.5 text-right font-mono">
+                      {t.result?.rank ? `${t.result.rank} / ${t.classified}` : "—"}
+                    </td>
+                    <td className="px-3 py-1.5 text-right font-mono">{avg(t.classAverage)}</td>
+                    <td className="px-3 py-1.5 text-xs">{t.result?.appreciation ?? "Not classified"}</td>
+                    <td className="px-3 py-1.5 text-xs text-muted">{t.published ? "Published" : "Not published yet"}</td>
+                  </tr>
+                ))}
+              </tbody>
+              {r.annual && (
+                <tfoot className="border-t border-line bg-ground text-sm">
+                  <tr>
+                    <td className="px-3 py-2 font-semibold">Year</td>
+                    <td className={`px-3 py-2 text-right font-mono font-semibold ${r.annual.decision === "repeat" ? "text-err" : ""}`}>
+                      {avg(r.annual.average)}
+                    </td>
+                    <td className="px-3 py-2 text-right font-mono">{r.annual.rank ? `${r.annual.rank} / ${r.classified}` : "—"}</td>
+                    <td />
+                    <td className="px-3 py-2 text-xs">{r.annual.appreciation ?? "Not classified"}</td>
+                    <td className="px-3 py-2 text-xs font-semibold">
+                      {r.annual.decision === "promoted" ? "Promoted" : r.annual.decision === "repeat" ? "Repeats the class" : ""}
+                    </td>
+                  </tr>
+                </tfoot>
+              )}
+            </table>
+          </div>
+          {r.terms.map((t) =>
+            t.result ? (
+              <details key={t.termId} className="mt-2 text-sm">
+                <summary className="cursor-pointer text-muted">Subjects, {t.name}</summary>
+                <ul className="mt-1 grid gap-x-6 gap-y-0.5 sm:grid-cols-2">
+                  {t.result.subjects.map((l) => (
+                    <li key={l.subjectId} className="flex justify-between gap-3">
+                      <span>
+                        {l.name} <span className="text-xs text-muted">×{l.coefficient}</span>
+                      </span>
+                      <span className={`font-mono ${l.average !== null && l.average < 10 ? "text-err" : ""}`}>
+                        {avg(l.average)}
+                        {l.rank ? <span className="ml-2 text-xs text-muted">rank {l.rank}</span> : null}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            ) : null,
           )}
+          <p className="mt-2 text-xs text-muted">
+            Published terms show the published results; the others count only locked marks. The year average is the mean of
+            the term averages; promotion at 10/20.
+          </p>
         </>
       )}
-    </section>
+    </div>
   );
 }
 
